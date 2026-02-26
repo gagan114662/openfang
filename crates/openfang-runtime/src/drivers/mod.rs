@@ -298,6 +298,50 @@ pub fn create_driver(config: &DriverConfig) -> Result<Arc<dyn LlmDriver>, LlmErr
     })
 }
 
+/// Create an LLM driver with orchestration support.
+///
+/// This function classifies the task based on the request content and routes to
+/// a specialized model if orchestration is enabled. Falls back to the base config
+/// if orchestration is disabled or no specialized model is configured.
+pub fn create_driver_with_orchestration(
+    request: &crate::llm_driver::CompletionRequest,
+    base_config: &DriverConfig,
+    orchestrator: &crate::model_orchestrator::ModelOrchestrator,
+) -> Result<Arc<dyn LlmDriver>, LlmError> {
+    // Classify task and try to get specialized model
+    let task_type = orchestrator.classify_task(request);
+
+    if let Some(model_spec) = orchestrator.select_model(task_type) {
+        // Try specialized model
+        let specialized_config = DriverConfig {
+            provider: model_spec.provider.clone(),
+            api_key: base_config.api_key.clone(),
+            base_url: None,
+        };
+
+        match create_driver(&specialized_config) {
+            Ok(driver) => {
+                tracing::debug!(
+                    task_type = ?task_type,
+                    provider = %model_spec.provider,
+                    model = %model_spec.model,
+                    "Using orchestrated model"
+                );
+                return Ok(driver);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Specialized model unavailable, falling back to default"
+                );
+            }
+        }
+    }
+
+    // Fall back to base config
+    create_driver(base_config)
+}
+
 /// List all known provider names.
 pub fn known_providers() -> &'static [&'static str] {
     &[
