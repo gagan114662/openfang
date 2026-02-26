@@ -484,6 +484,75 @@ fn gethostname() -> Option<String> {
     }
 }
 
+/// Handle a Telegram command by interacting with the kernel.
+async fn handle_telegram_command(
+    kernel: Arc<OpenFangKernel>,
+    chat_id: String,
+    command: openfang_telegram::TelegramCommand,
+) -> Result<(), String> {
+    use openfang_telegram::TelegramCommand;
+
+    let bot = kernel.telegram_bot.as_ref()
+        .ok_or_else(|| "Telegram bot not initialized".to_string())?;
+
+    match command {
+        TelegramCommand::ListAgents => {
+            let agents = kernel.registry.list();
+            let agent_list = agents
+                .iter()
+                .map(|a| format!("- {} ({})", a.name, a.id))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let response = if agent_list.is_empty() {
+                "No agents running.".to_string()
+            } else {
+                format!("Active agents:\n{}", agent_list)
+            };
+
+            bot.send_message(&chat_id, &response).await?;
+        }
+        TelegramCommand::Run { agent, task } => {
+            // Find agent by name
+            let agent_id = kernel.registry.find_by_name(&agent)
+                .map(|e| e.id)
+                .ok_or_else(|| format!("Agent '{}' not found", agent))?;
+
+            // Send message to agent
+            match kernel.send_message(agent_id, &task).await {
+                Ok(_) => {
+                    bot.send_message(&chat_id, &format!("✓ Task sent to {}", agent)).await?;
+                }
+                Err(e) => {
+                    bot.send_message(&chat_id, &format!("✗ Error: {}", e)).await?;
+                }
+            }
+        }
+        TelegramCommand::Status { agent_id } => {
+            let parsed_id = agent_id.parse()
+                .map_err(|_| format!("Invalid agent ID: {}", agent_id))?;
+
+            let entry = kernel.registry.get(parsed_id)
+                .ok_or_else(|| format!("Agent {} not found", agent_id))?;
+
+            let response = format!(
+                "Agent: {}\nID: {}\nState: {:?}\nModel: {}",
+                entry.name, entry.id, entry.state, entry.manifest.model.model
+            );
+
+            bot.send_message(&chat_id, &response).await?;
+        }
+        TelegramCommand::Help => {
+            // Already handled in polling loop
+        }
+        TelegramCommand::Unknown { .. } => {
+            // Ignore unknown commands
+        }
+    }
+
+    Ok(())
+}
+
 impl OpenFangKernel {
     /// Boot the kernel with configuration from the given path.
     pub fn boot(config_path: Option<&Path>) -> KernelResult<Self> {
@@ -3007,6 +3076,24 @@ impl OpenFangKernel {
                     }
                 });
             }
+        }
+
+        // Start Telegram command processor
+        let kernel_arc = Arc::clone(self);
+        let kernel_weak = Arc::downgrade(&kernel_arc);
+        if self.telegram_bot.is_some() {
+            tokio::spawn(async move {
+                let mut rx_guard = kernel_arc.telegram_commands.lock().await;
+                if let Some(mut rx) = rx_guard.take() {
+                    drop(rx_guard);
+
+                    while let Some((chat_id, command)) = rx.recv().await {
+                        if let Some(k) = kernel_weak.upgrade() {
+                            let _ = handle_telegram_command(k, chat_id, command).await;
+                        }
+                    }
+                }
+            });
         }
 
         // Start OFP peer node if network is enabled
