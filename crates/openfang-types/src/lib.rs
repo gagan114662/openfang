@@ -14,6 +14,7 @@ pub mod media;
 pub mod memory;
 pub mod message;
 pub mod model_catalog;
+pub mod raindrop;
 pub mod scheduler;
 pub mod serde_compat;
 pub mod taint;
