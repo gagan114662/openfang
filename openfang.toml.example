@@ -19,6 +19,21 @@ decay_rate = 0.05                         # Memory confidence decay rate
 listen_addr = "127.0.0.1:4200"           # OFP listen address
 # shared_secret = ""                      # Required for P2P authentication
 
+# Model orchestration - route tasks to specialized models
+[orchestrator]
+enabled = true                           # Enable multi-model task routing
+
+[orchestrator.routing]
+research = { provider = "gemini", model = "gemini-2.0-flash-exp" }   # Fast research with deep search
+coding = { provider = "anthropic", model = "claude-opus-4-6" }       # Expert reasoning for code
+quick = { provider = "groq", model = "llama-3-70b" }                 # Ultra-fast Q&A
+
+# Video summary generation - post-execution demonstrations
+[video]
+enabled = true                           # Enable video summaries of agent work
+retention_days = 30                      # Delete recordings older than this
+max_storage_mb = 5000                    # Maximum storage (5 GB)
+
 # Session compaction (LLM-based context management)
 # [compaction]
 # threshold = 80                          # Compact when messages exceed this count
@@ -29,9 +44,12 @@ listen_addr = "127.0.0.1:4200"           # OFP listen address
 # usage_footer = "Full"                   # "Off", "Tokens", "Cost", or "Full"
 
 # Channel adapters (configure tokens via environment variables)
-# [telegram]
-# bot_token_env = "TELEGRAM_BOT_TOKEN"
-# allowed_users = []                      # Empty = allow all
+# Telegram bidirectional integration
+[channels.telegram]
+bot_token_env = "TELEGRAM_BOT_TOKEN"     # Env var holding bot token (from @BotFather)
+allowed_users = []                       # Telegram user IDs (empty = allow all)
+# default_agent = "assistant"            # Route messages to this agent by default
+poll_interval_secs = 1                   # Polling interval
 
 # [discord]
 # bot_token_env = "DISCORD_BOT_TOKEN"
