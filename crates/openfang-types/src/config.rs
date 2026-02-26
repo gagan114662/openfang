@@ -966,6 +966,46 @@ pub struct ModelSpec {
     pub model: String,
 }
 
+// ---------------------------------------------------------------------------
+// Gap 9: Video Summary Generation
+// ---------------------------------------------------------------------------
+
+/// Default retention period for video recordings (30 days).
+fn default_retention_days() -> u32 {
+    30
+}
+
+/// Default maximum storage for video recordings (5000 MB = 5 GB).
+fn default_max_storage_mb() -> u64 {
+    5000
+}
+
+/// Video summary generation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoConfig {
+    /// Whether video summary generation is enabled.
+    pub enabled: bool,
+
+    /// Retention period in days for old recordings.
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+
+    /// Maximum total storage in megabytes for recordings.
+    #[serde(default = "default_max_storage_mb")]
+    pub max_storage_mb: u64,
+}
+
+impl Default for VideoConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: 30,
+            max_storage_mb: 5000,
+        }
+    }
+}
+
 /// Top-level kernel configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1089,6 +1129,9 @@ pub struct KernelConfig {
     /// Model orchestration configuration.
     #[serde(default)]
     pub orchestrator: OrchestratorConfig,
+    /// Video summary generation configuration.
+    #[serde(default)]
+    pub video: VideoConfig,
 }
 
 /// Global spending budget configuration.
@@ -1234,6 +1277,7 @@ impl Default for KernelConfig {
             thinking: None,
             budget: BudgetConfig::default(),
             orchestrator: OrchestratorConfig::default(),
+            video: VideoConfig::default(),
         }
     }
 }
