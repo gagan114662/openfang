@@ -999,6 +999,31 @@ impl Default for VideoConfig {
     }
 }
 
+/// Raindrop incident routing configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RaindropConfig {
+    /// Whether Raindrop integration is enabled.
+    pub enabled: bool,
+
+    /// Raindrop API URL (e.g., "http://localhost:3100").
+    pub api_url: String,
+
+    /// Workspace-to-Telegram chat mapping.
+    /// Maps Raindrop workspace ID to Telegram chat ID.
+    pub workspace_chat_mapping: HashMap<String, i64>,
+}
+
+impl Default for RaindropConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: "http://localhost:3100".to_string(),
+            workspace_chat_mapping: HashMap::new(),
+        }
+    }
+}
+
 /// Top-level kernel configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1125,6 +1150,9 @@ pub struct KernelConfig {
     /// Video summary generation configuration.
     #[serde(default)]
     pub video: VideoConfig,
+    /// Raindrop incident routing configuration.
+    #[serde(default)]
+    pub raindrop: RaindropConfig,
 }
 
 /// Global spending budget configuration.
@@ -1271,6 +1299,7 @@ impl Default for KernelConfig {
             budget: BudgetConfig::default(),
             orchestrator: OrchestratorConfig::default(),
             video: VideoConfig::default(),
+            raindrop: RaindropConfig::default(),
         }
     }
 }
