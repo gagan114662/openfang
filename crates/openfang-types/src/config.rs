@@ -919,6 +919,53 @@ impl Default for ThinkingConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Gap 8: Model Orchestration
+// ---------------------------------------------------------------------------
+
+/// Model orchestration configuration for routing tasks to specialized models.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OrchestratorConfig {
+    /// Whether orchestration is enabled.
+    pub enabled: bool,
+
+    /// Task-to-model routing configuration.
+    pub routing: OrchestratorRouting,
+}
+
+impl Default for OrchestratorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            routing: OrchestratorRouting::default(),
+        }
+    }
+}
+
+/// Task routing rules for model orchestration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct OrchestratorRouting {
+    /// Model spec for research tasks.
+    pub research: Option<ModelSpec>,
+    /// Model spec for coding tasks.
+    pub coding: Option<ModelSpec>,
+    /// Model spec for quick Q&A tasks.
+    pub quick: Option<ModelSpec>,
+    /// Model spec for image generation tasks.
+    pub image: Option<ModelSpec>,
+}
+
+/// Model specification for orchestration routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSpec {
+    /// Provider name (e.g., "anthropic", "gemini", "groq").
+    pub provider: String,
+    /// Model identifier (e.g., "claude-opus-4-6").
+    pub model: String,
+}
+
 /// Top-level kernel configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1039,6 +1086,9 @@ pub struct KernelConfig {
     /// Global spending budget configuration.
     #[serde(default)]
     pub budget: BudgetConfig,
+    /// Model orchestration configuration.
+    #[serde(default)]
+    pub orchestrator: OrchestratorConfig,
 }
 
 /// Global spending budget configuration.
@@ -1183,6 +1233,7 @@ impl Default for KernelConfig {
             auth_profiles: HashMap::new(),
             thinking: None,
             budget: BudgetConfig::default(),
+            orchestrator: OrchestratorConfig::default(),
         }
     }
 }
