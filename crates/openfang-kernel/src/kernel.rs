@@ -119,6 +119,8 @@ pub struct OpenFangKernel {
     pub hooks: openfang_runtime::hooks::HookRegistry,
     /// Persistent process manager for interactive sessions (REPLs, servers).
     pub process_manager: Arc<openfang_runtime::process_manager::ProcessManager>,
+    /// Model orchestrator for multi-model task routing.
+    pub orchestrator: Arc<openfang_runtime::model_orchestrator::ModelOrchestrator>,
     /// OFP peer registry — tracks connected peers.
     pub peer_registry: Option<openfang_wire::PeerRegistry>,
     /// OFP peer node — the local networking node.
@@ -822,6 +824,15 @@ impl OpenFangKernel {
         let initial_broadcast = config.broadcast.clone();
         let auto_reply_engine = crate::auto_reply::AutoReplyEngine::new(config.auto_reply.clone());
 
+        // Initialize model orchestrator
+        let orchestrator = Arc::new(openfang_runtime::model_orchestrator::ModelOrchestrator::new(
+            config.orchestrator.clone(),
+        ));
+
+        if config.orchestrator.enabled {
+            info!("Model orchestrator enabled");
+        }
+
         let kernel = Self {
             config,
             registry: AgentRegistry::new(),
@@ -863,6 +874,7 @@ impl OpenFangKernel {
             auto_reply_engine,
             hooks: openfang_runtime::hooks::HookRegistry::new(),
             process_manager: Arc::new(openfang_runtime::process_manager::ProcessManager::new(5)),
+            orchestrator,
             peer_registry: None,
             peer_node: None,
             booted_at: std::time::Instant::now(),
