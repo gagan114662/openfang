@@ -24,8 +24,8 @@ else
 fi
 
 # Check Raindrop service
-if curl -s http://127.0.0.1:8090/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✓${NC} Raindrop service is running on port 8090"
+if curl -s http://127.0.0.1:4201/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✓${NC} Raindrop service is running on port 4201"
 else
     echo -e "${RED}✗${NC} Raindrop service is NOT running"
     echo "Start with: cd crates/raindrop && cargo run"
@@ -92,7 +92,7 @@ echo ""
 echo "Step 4: Testing Raindrop SSE stream endpoint..."
 
 # Test basic health
-RAINDROP_HEALTH=$(curl -s http://127.0.0.1:8090/health)
+RAINDROP_HEALTH=$(curl -s http://127.0.0.1:4201/health)
 if echo "$RAINDROP_HEALTH" | grep -q "ok" 2>/dev/null; then
     echo -e "${GREEN}✓${NC} Raindrop health endpoint OK"
 else
@@ -102,7 +102,7 @@ fi
 
 # Test SSE endpoint (timeout after 2 seconds)
 echo "  Testing SSE stream endpoint..."
-SSE_TEST=$(timeout 2 curl -s -N http://127.0.0.1:8090/api/telegram/stream 2>&1 || true)
+SSE_TEST=$(timeout 2 curl -s -N http://127.0.0.1:4201/v1/incidents/stream 2>&1 || true)
 
 if echo "$SSE_TEST" | grep -q "data:" 2>/dev/null || echo "$SSE_TEST" | grep -q "event:" 2>/dev/null; then
     echo -e "${GREEN}✓${NC} SSE stream endpoint is active"
@@ -130,12 +130,12 @@ echo ""
 echo "4. Verify bot replies in Telegram chat"
 echo ""
 echo "5. Test error handling:"
-echo "   - Try: curl -X POST http://127.0.0.1:8090/api/telegram/webhook \\"
+echo "   - Try: curl -X POST http://127.0.0.1:4201/api/telegram/webhook \\"
 echo "     -H 'Content-Type: application/json' \\"
 echo "     -d '{\"message\":{\"chat\":{\"id\":123},\"text\":\"test\"}}'"
 echo ""
 echo "6. Monitor SSE stream for events:"
-echo "   curl -N http://127.0.0.1:8090/api/telegram/stream"
+echo "   curl -N http://127.0.0.1:4201/v1/incidents/stream"
 echo ""
 echo -e "${GREEN}=== All automated checks passed! ===${NC}"
 echo ""

@@ -59,14 +59,13 @@ poll_interval_secs = 1                   # Polling interval
 # bot_token_env = "SLACK_BOT_TOKEN"
 # app_token_env = "SLACK_APP_TOKEN"
 
-# Raindrop integration - agent observability backend
+# Raindrop integration - Telegram incident forwarding
 [raindrop]
-enabled = true                           # Enable Raindrop integration
-api_url = "http://127.0.0.1:9000"        # Raindrop API server URL
-workspace_id = "default-workspace"       # Raindrop workspace ID
-send_timeout_secs = 5                    # Timeout for sending events
-retry_attempts = 3                       # Number of retry attempts
-batch_size = 100                         # Events per batch
+enabled = true
+api_url = "http://127.0.0.1:4201"
+
+[raindrop.workspace_chat_mapping]
+"default-workspace" = 8444910202  # Your Telegram chat ID
 
 # MCP server connections
 # [[mcp_servers]]

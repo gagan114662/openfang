@@ -1009,6 +1009,9 @@ pub struct RaindropConfig {
     /// Raindrop API URL (e.g., "http://localhost:3100").
     pub api_url: String,
 
+    /// Optional API token for authentication.
+    pub api_token: Option<String>,
+
     /// Workspace-to-Telegram chat mapping.
     /// Maps Raindrop workspace ID to Telegram chat ID.
     pub workspace_chat_mapping: HashMap<String, i64>,
@@ -1019,6 +1022,7 @@ impl Default for RaindropConfig {
         Self {
             enabled: false,
             api_url: "http://localhost:3100".to_string(),
+            api_token: None,
             workspace_chat_mapping: HashMap::new(),
         }
     }

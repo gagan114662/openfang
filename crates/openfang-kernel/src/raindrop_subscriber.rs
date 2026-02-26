@@ -51,8 +51,11 @@ impl RaindropSubscriber {
     async fn try_subscribe(&self) -> Result<(), String> {
         let url = format!("{}/v1/incidents/stream", self.config.api_url.trim_end_matches('/'));
 
-        let response = self.client
-            .get(&url)
+        let mut request = self.client.get(&url);
+        if let Some(ref token) = self.config.api_token {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| format!("Failed to connect to Raindrop: {}", e))?;
