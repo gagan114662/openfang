@@ -17,6 +17,7 @@ pub mod heartbeat;
 pub mod kernel;
 pub mod metering;
 pub mod pairing;
+pub mod raindrop_subscriber;
 pub mod registry;
 pub mod scheduler;
 pub mod supervisor;
