@@ -121,6 +121,8 @@ pub struct OpenFangKernel {
     pub process_manager: Arc<openfang_runtime::process_manager::ProcessManager>,
     /// Model orchestrator for multi-model task routing.
     pub orchestrator: Arc<openfang_runtime::model_orchestrator::ModelOrchestrator>,
+    /// Video summary renderer.
+    pub video_renderer: Arc<openfang_runtime::video_renderer::VideoRenderer>,
     /// OFP peer registry — tracks connected peers.
     pub peer_registry: Option<openfang_wire::PeerRegistry>,
     /// OFP peer node — the local networking node.
@@ -833,6 +835,16 @@ impl OpenFangKernel {
             info!("Model orchestrator enabled");
         }
 
+        // Initialize video renderer
+        let video_renderer = Arc::new(openfang_runtime::video_renderer::VideoRenderer::new(
+            config.video.clone(),
+            &config.data_dir,
+        ));
+
+        if config.video.enabled {
+            info!("Video summary generation enabled");
+        }
+
         let kernel = Self {
             config,
             registry: AgentRegistry::new(),
@@ -875,6 +887,7 @@ impl OpenFangKernel {
             hooks: openfang_runtime::hooks::HookRegistry::new(),
             process_manager: Arc::new(openfang_runtime::process_manager::ProcessManager::new(5)),
             orchestrator,
+            video_renderer,
             peer_registry: None,
             peer_node: None,
             booted_at: std::time::Instant::now(),
