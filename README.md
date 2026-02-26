@@ -60,6 +60,47 @@ openfang start
 
 ---
 
+## New Features (v0.2.0)
+
+### 🎯 AI Engine Orchestration
+
+Automatically route tasks to the best-performing model:
+- **Research queries** → Gemini (fast, deep search)
+- **Code generation** → Claude Opus (expert reasoning)
+- **Quick Q&A** → Groq (ultra-fast responses)
+- Manual overrides supported per agent
+
+### 📹 Video Summaries
+
+Post-execution video demonstrations of agent work:
+- Automatic generation after task completion
+- Shows commands, code edits, browser actions
+- 30-60 second summaries, not full recordings
+- API endpoint: `/api/agents/{id}/recordings/{task_id}`
+
+### 💬 Telegram Integration
+
+Control agents through Telegram bot:
+- Send commands: `/run <agent> <task>`
+- Receive notifications on task completion
+- Bidirectional: command interface + automated updates
+- User whitelisting and rate limiting
+
+Configure in `~/.openfang/config.toml`:
+```toml
+[orchestrator]
+enabled = true
+
+[video]
+enabled = true
+
+[channels.telegram]
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+allowed_users = ["your_telegram_user_id"]
+```
+
+---
+
 ## Hands: Agents That Actually Do Things
 
 <p align="center"><em>"Traditional agents wait for you to type. Hands work <strong>for</strong> you."</em></p>
