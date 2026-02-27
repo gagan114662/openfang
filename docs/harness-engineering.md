@@ -31,6 +31,7 @@ PR sequence is strictly ordered:
 6. If gate returns `needs-remediation`, `remediation-agent` can patch in-branch (constrained).
 7. If gate returns stale or timeout review states, `greptile-rerun` posts one deduped rerun comment per SHA.
 8. After clean rerun, `greptile-auto-resolve-threads` can resolve bot-only unresolved threads.
+9. `sentry-remediation-agent` (scheduled or manual) can ingest unresolved Sentry issues, normalize findings, and open constrained remediation PRs.
 
 ## Current-Head SHA Discipline
 
@@ -76,6 +77,7 @@ Produced by `scripts/harness/remediation_runner.py`.
 - `.github/workflows/remediation-agent.yml`
 - `.github/workflows/greptile-auto-resolve-threads.yml`
 - `.github/workflows/harness-weekly-metrics.yml`
+- `.github/workflows/sentry-remediation-agent.yml`
 
 ## Rollout
 
@@ -99,6 +101,7 @@ In `phase-2+`, fanout runs only after a passing gate.
 python3 scripts/harness/risk_policy_gate.py --pr <n> --head-sha <sha> --changed-files <file>
 python3 scripts/harness/browser_evidence_verify.py --manifest artifacts/browser-evidence-manifest.json
 python3 scripts/harness/remediation_runner.py --findings artifacts/review-findings.json --head-sha <sha>
+python3 scripts/harness/sentry_findings.py --org <org> --project <project> --query "is:unresolved level:error"
 ```
 
 ## Notes

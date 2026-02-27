@@ -95,7 +95,8 @@ def main() -> int:
     }
 
     provider = str(findings_payload.get("provider", "")).lower()
-    if provider and provider != "greptile":
+    supported_providers = {"", "greptile", "sentry"}
+    if provider not in supported_providers:
         result["errors"].append(f"unsupported provider for remediation: {provider}")
         _write_json(args.result_out, result)
         return 1
