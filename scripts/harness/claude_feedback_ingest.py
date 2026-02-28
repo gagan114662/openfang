@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_MARKER = "<!-- openfang-claude-feedback -->"
-JSON_BLOCK_RE = re.compile(r"```(?:json)?\\s*(\{.*?\})\\s*```", re.IGNORECASE | re.DOTALL)
+JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL)
 ACTIONABLE_KEYWORDS = ("fix", "error", "panic", "fail", "regression", "leak", "unsafe")
 
 

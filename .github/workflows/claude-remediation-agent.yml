@@ -276,7 +276,7 @@ jobs:
               'errors': [],
           }
           if '${{ steps.label_gate.outputs.run_remediation }}' != 'true':
-              payload['errors'].append(\"label gate not satisfied for configured trigger label\")
+              payload['errors'].append('label gate not satisfied for configured trigger label')
           if '${{ steps.cfg.outputs.enabled }}' != 'true':
               payload['errors'].append('claude remediation disabled in contract')
           if '${{ steps.attempt_guard.outputs.already_attempted }}' == 'true':
