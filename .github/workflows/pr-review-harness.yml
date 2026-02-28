@@ -237,6 +237,17 @@ jobs:
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
+      - name: Refresh evidence package with risk report
+        run: |
+          python3 scripts/harness/evidence_capture.py \
+            --head-sha "${{ needs.resolve-context.outputs.head_sha }}" \
+            --changed-files artifacts/context/changed_files.txt \
+            --risk-report artifacts/risk-policy-report.json \
+            --out-dir artifacts/pr-review/evidence \
+            --out-manifest artifacts/browser-evidence-manifest.json \
+            --ui-impact "${{ steps.ui.outputs.ui_impact }}" \
+            --playwright-json artifacts/playwright-evidence.json
+
       - name: Verify evidence manifest
         id: verify
         run: |

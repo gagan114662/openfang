@@ -172,6 +172,7 @@ def main() -> int:
             runs = check_runs_by_name.get(check, [])
             if not runs:
                 details.append(f"{check}=missing")
+                failures.append(check)
                 continue
             run = sorted(runs, key=lambda item: int(item.get("id", 0)), reverse=True)[0]
             status = str(run.get("status", ""))
@@ -180,10 +181,10 @@ def main() -> int:
             if conclusion.lower() in {"failure", "cancelled", "timed_out", "action_required"}:
                 failures.append(check)
         if failures:
-            return False, f"failing required checks: {', '.join(failures)}"
+            return False, f"missing or failing required checks: {', '.join(sorted(set(failures)))}"
         if details:
             return True, "; ".join(details)
-        return True, "no required CI checks declared"
+        return True, "no non-harness required CI checks declared for this risk tier"
 
     def verify_evidence_package() -> Tuple[bool, str]:
         if not artifacts:
