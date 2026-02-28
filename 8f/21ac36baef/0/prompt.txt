@@ -1,0 +1,62 @@
+https://github.com/ForLoopCodes/contextplus will this solve for the context rot problem with you? worth integrating with my project?
+
+---
+
+lets integrate it to understand opn_fang for you at the start of every session
+
+---
+
+in another session this happened, ❯ which mcp server are u supposed to strat at the begining of every session 
+   in this folder?                                                          
+  ⎿  UserPromptSubmit hook error
+
+⏺ Let me check the project configuration for any MCP server settings.
+
+⏺ Searched for 3 patterns (ctrl+o to expand)
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+
+⏺ Let me check the settings and MCP configuration files for this project
+  directory.
+
+⏺ Searched for 6 patterns, read 2 files (ctrl+o to expand)     
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+  ⎿  PreToolUse:Glob hook error
+  ⎿  PostToolUse:Glob hook error
+  ⎿  PostToolUseFailure:Glob hook error
+  ⎿  PreToolUse:Read hook error
+  ⎿  PostToolUse:Read hook error            
+  ⎿  PreToolUse:Read hook error                                                 
+  ⎿  PostToolUse:Read hook error                                                
+  ⎿  PreToolUse:Glob hook error                                                 
+  ⎿  PostToolUse:Glob hook error                                                
+  ⎿  PostToolUseFailure:Glob hook error                                         
+                                                                                
+⏺ I don't see any explicit instruction in your configuration files about
+  starting a specific MCP server at the beginning of every session in this      
+  folder (/Users/gaganarora).                                                   
+                                                                                
+  Here's what I did find:                                                       
+                                                                                
+  - Hooks: Your settings.json has spark-hook.sh running on all tool events
+  (PreToolUse, PostToolUse, etc.)
+  - MCP server currently connected: The Codex MCP server (providing
+  mcp__codex__codex and mcp__codex__codex-reply tools)
+  - Permissions: Your settings.local.json has pre-approved permissions for an
+  entire CLI tool, including entire hooks claude-code session-start, which
+  suggests you may have been running that at session start
+
+  There's no project-level CLAUDE.md in /Users/gaganarora and no explicit "start
+   this MCP server" instruction that I can find.
+
+  Were you thinking of:
+  1. The entire CLI tool (session-start hook)?
+  2. The Codex MCP server?
+  3. Something else entirely? why?

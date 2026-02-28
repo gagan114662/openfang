@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "8f21ac36baef",
+  "session_id": "10d08cb3-c360-49ed-878f-c1fdbf3513d5",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-28T17:20:38.30138Z",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "scripts/harness/evidence_capture.py"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "d67a47871431",
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 42053,
+    "cache_read_tokens": 1020638,
+    "output_tokens": 410,
+    "api_call_count": 22
+  },
+  "summary": {
+    "intent": "User wanted to integrate the contextplus MCP server to help Claude understand the opn_fang codebase structure at the start of every session, addressing context rot concerns.",
+    "outcome": "Successfully configured contextplus as a project-level MCP server with `.mcp.json`, pulled the required `nomic-embed-text` Ollama model, updated CLAUDE.md with session-start instructions, and added `.contextplus/` to .gitignore.",
+    "learnings": {
+      "repo": [
+        "The opn_fang project has 14 crates that can benefit from semantic search",
+        "Project already has a solid memory system (MEMORY.md, topic files, CLAUDE.md) for fighting context rot"
+      ],
+      "code": [],
+      "workflow": [
+        "MCP servers defined in `.mcp.json` are only loaded at Claude Code session startup, not mid-session",
+        "Project-level `.mcp.json` files only apply when Claude Code is launched from that directory",
+        "contextplus requires both Ollama running (`ollama serve`) and the `nomic-embed-text` embedding model",
+        "First run of contextplus will be slower as it builds the embedding index",
+        "Session-start instructions in CLAUDE.md should call `get_context_tree` to load codebase structure upfront"
+      ]
+    },
+    "friction": [
+      "Confusion when testing in a different session that was launched from home directory instead of project directory",
+      "Hook errors (`spark-hook.sh`) firing on every tool call causing noise in output",
+      "contextplus is a young project (134 stars, single maintainer, no license specified) with unclear maturity"
+    ],
+    "open_items": [
+      "Need to restart Claude Code session from project directory to activate the new MCP server",
+      "May want to investigate and fix the `spark-hook.sh` hook errors",
+      "Ollama must be running before each session for contextplus to work"
+    ]
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-28T17:20:24.763424Z",
+    "agent_lines": 38,
+    "human_added": 98,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 136,
+    "agent_percentage": 27.941176470588236
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "8f21ac36baef",
+  "strategy": "manual-commit",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "scripts/harness/evidence_capture.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/8f/21ac36baef/0/metadata.json",
+      "transcript": "/8f/21ac36baef/0/full.jsonl",
+      "context": "/8f/21ac36baef/0/context.md",
+      "content_hash": "/8f/21ac36baef/0/content_hash.txt",
+      "prompt": "/8f/21ac36baef/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 42053,
+    "cache_read_tokens": 1020638,
+    "output_tokens": 410,
+    "api_call_count": 22
+  }
+}
