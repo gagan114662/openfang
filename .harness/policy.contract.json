@@ -7,7 +7,7 @@
     "phases": {
       "phase-0": {
         "description": "Advisory baseline and metrics collection",
-        "enforceMergeBlock": false,
+        "enforceMergeBlock": true,
         "enableRemediation": false
       },
       "phase-1": {
@@ -99,6 +99,7 @@
         ".github/**"
       ],
       "requiredChecks": [
+        "risk-policy-gate",
         "docs-lint"
       ],
       "reviewPolicy": {
