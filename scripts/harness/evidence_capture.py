@@ -12,8 +12,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
 
 
 def _read_json(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
@@ -86,22 +94,54 @@ def _render_slide(
     title: str,
     lines: List[str],
 ) -> None:
-    body = [title] + lines
-    text = "\n".join(_sanitize_text(item) for item in body if item.strip())
-    if not text:
-        text = "OpenFang PR review evidence"
+    if Image and ImageDraw and ImageFont:
+        _render_slide_pillow(fontfile, out_path, color, title, lines)
+        return
 
-    filter_expr = "drawtext="
-    if fontfile:
-        filter_expr += f"fontfile={fontfile}:"
-    filter_expr += (
-        f"text='{_escape_drawtext(text)}':"
-        "fontcolor=white:"
-        "fontsize=32:"
-        "line_spacing=10:"
-        "x=52:"
-        "y=62"
-    )
+    _render_slide_ffmpeg(ffmpeg, fontfile, out_path, color, title, lines)
+
+
+def _render_slide_ffmpeg(
+    ffmpeg: str,
+    fontfile: str,
+    out_path: Path,
+    color: str,
+    title: str,
+    lines: List[str],
+) -> None:
+    body = [_sanitize_text(title)] + [_sanitize_text(item) for item in lines if item.strip()]
+    rendered: List[str] = []
+    for idx, raw in enumerate(body):
+        width = 58 if idx == 0 else 74
+        chunks = textwrap.wrap(raw, width=width, break_long_words=False, break_on_hyphens=False)
+        rendered.extend(chunks or [""])
+    if not rendered:
+        rendered = ["OpenFang PR review evidence"]
+
+    max_lines = 16
+    rendered = rendered[:max_lines]
+
+    filters: List[str] = []
+    y = 62
+    for idx, line in enumerate(rendered):
+        size = 44 if idx == 0 else 30
+        drawtext = "drawtext="
+        if fontfile:
+            drawtext += f"fontfile={fontfile}:"
+        drawtext += (
+            f"text='{_escape_drawtext(line)}':"
+            "fontcolor=white:"
+            f"fontsize={size}:"
+            "x=52:"
+            f"y={y}:"
+            "box=1:"
+            "boxcolor=black@0.20:"
+            "boxborderw=8"
+        )
+        filters.append(drawtext)
+        y += 58 if idx == 0 else 40
+
+    filter_expr = ",".join(filters)
 
     cmd = [
         ffmpeg,
@@ -119,7 +159,7 @@ def _render_slide(
     try:
         _run(cmd)
     except RuntimeError:
-        # Some ffmpeg builds omit drawtext (libfreetype). Fall back to plain color slides.
+        # Some ffmpeg builds omit drawtext (libfreetype). Fall back to non-blank visual slide.
         fallback = [
             ffmpeg,
             "-y",
@@ -127,11 +167,84 @@ def _render_slide(
             "lavfi",
             "-i",
             f"color=c={color}:s=1280x720:d=1",
+            "-vf",
+            "drawgrid=w=80:h=80:t=2:c=white@0.15",
             "-frames:v",
             "1",
             str(out_path),
         ]
         _run(fallback)
+
+
+def _hex_to_rgb(color: str) -> Tuple[int, int, int]:
+    value = color.strip().lower()
+    if value.startswith("0x"):
+        value = value[2:]
+    if value.startswith("#"):
+        value = value[1:]
+    if len(value) != 6 or not re.fullmatch(r"[0-9a-f]{6}", value):
+        return (15, 23, 42)
+    return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def _load_pillow_font(fontfile: str, size: int) -> "ImageFont.ImageFont":
+    if ImageFont is None:
+        raise RuntimeError("Pillow is unavailable")
+    if fontfile and Path(fontfile).exists():
+        try:
+            return ImageFont.truetype(fontfile, size=size)
+        except Exception:
+            pass
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _render_slide_pillow(
+    fontfile: str,
+    out_path: Path,
+    color: str,
+    title: str,
+    lines: List[str],
+) -> None:
+    if Image is None or ImageDraw is None:
+        raise RuntimeError("Pillow is unavailable")
+
+    width, height = 1280, 720
+    img = Image.new("RGB", (width, height), _hex_to_rgb(color))
+    draw = ImageDraw.Draw(img)
+
+    body = [_sanitize_text(title)] + [_sanitize_text(item) for item in lines if item.strip()]
+    rendered: List[Tuple[str, bool]] = []
+    for idx, raw in enumerate(body):
+        max_width = 56 if idx == 0 else 72
+        chunks = textwrap.wrap(raw, width=max_width, break_long_words=False, break_on_hyphens=False)
+        if not chunks:
+            chunks = [""]
+        for chunk in chunks:
+            rendered.append((chunk, idx == 0))
+    if not rendered:
+        rendered = [("OpenFang PR review evidence", True)]
+
+    rendered = rendered[:16]
+    title_font = _load_pillow_font(fontfile, 46)
+    body_font = _load_pillow_font(fontfile, 30)
+
+    x = 52
+    y = 52
+    for text, is_title in rendered:
+        font = title_font if is_title else body_font
+        bbox = draw.textbbox((x, y), text, font=font)
+        pad = 10
+        box = (bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
+        draw.rectangle(box, fill=(0, 0, 0, 64))
+        draw.text((x, y), text, font=font, fill=(255, 255, 255))
+        y += 60 if is_title else 40
+        if y > height - 40:
+            break
+
+    img.save(out_path, format="PNG")
 
 
 def _render_video(ffmpeg: str, images: List[Path], out_path: Path, duration_seconds: int = 8) -> None:

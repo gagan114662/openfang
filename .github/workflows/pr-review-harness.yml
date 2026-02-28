@@ -143,6 +143,11 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pillow
+
       - name: Download context artifact
         uses: actions/download-artifact@v4
         with:
