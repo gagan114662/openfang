@@ -1,0 +1,82 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "0155fa3d9fdd",
+  "session_id": "2968394f-4d2a-4c50-b692-d3b0712de53b",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-28T17:05:16.833378Z",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".github/workflows/pr-review-harness.yml",
+    ".harness/acceptance.criteria.json",
+    ".harness/policy.contract.json",
+    ".harness/schemas/browser-evidence.schema.json",
+    ".harness/schemas/risk-policy-report.schema.json",
+    "scripts/harness/browser_evidence_verify.py",
+    "scripts/harness/checks_resolver.py",
+    "scripts/harness/evidence_capture.py",
+    "scripts/harness/playwright_capture.mjs",
+    "scripts/harness/pr_packet.py",
+    "scripts/harness/pr_review_upsert.py",
+    "scripts/harness/risk_policy_gate.py"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "34a0d8c2d99d",
+  "token_usage": {
+    "input_tokens": 45,
+    "cache_creation_tokens": 47974,
+    "cache_read_tokens": 2002687,
+    "output_tokens": 697,
+    "api_call_count": 36
+  },
+  "summary": {
+    "intent": "User wanted to activate all 7 hands in the OpenFang dashboard and fix the UI to properly display active hand instances.",
+    "outcome": "Successfully activated all 7 hands via API, installed missing dependencies (yt-dlp, python3), fixed dashboard to show active badges and load active instances on init, and rebuilt the binary. However, activations were lost on daemon restart since they're stored in-memory.",
+    "learnings": {
+      "repo": [
+        "OpenFang serves static files embedded at compile time via include_str!() - edits to HTML/JS require rebuilding the binary",
+        "Hand activations are stored in-memory and reset on daemon restart",
+        "Dashboard uses Alpine.js with separate loadData() for available hands and loadActive() for running instances",
+        "API runs on port 4200, dashboard/UI served on port 50051",
+        "Browser Hand dependency check looks for 'python' but macOS has 'python3', causing false negatives"
+      ],
+      "code": [
+        {
+          "path": "crates/openfang-api/static/index_body.html",
+          "line": 2306,
+          "finding": "Hands page x-init only called loadData() (available hands) but never loadActive(), so active instances weren't fetched until user clicked the Active tab"
+        },
+        {
+          "path": "crates/openfang-api/static/js/pages/hands.js",
+          "line": 2325,
+          "finding": "loadActive() is only triggered by clicking the Active tab, not on page init"
+        }
+      ],
+      "workflow": [
+        "When static files are compiled into Rust binaries, the running daemon serves stale content until rebuilt and restarted",
+        "curl activations don't trigger client-side state updates in Alpine.js apps - need API responses or page refresh to see changes"
+      ]
+    },
+    "friction": [
+      "Static files embedded at compile time meant multiple rebuild cycles to test UI changes",
+      "Hand activations lost on daemon restart due to in-memory storage",
+      "Browser Hand dependency check incompatible with macOS python3 naming"
+    ],
+    "open_items": [
+      "Fix Browser Hand dependency check to look for 'python3' instead of 'python'",
+      "Twitter Hand needs TWITTER_BEARER_TOKEN configured to actually post",
+      "Consider persisting hand activations across daemon restarts",
+      "Re-activate all hands after restart since they were lost",
+      "Verify dashboard now shows active badges and counts correctly after rebuild"
+    ]
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-28T17:04:58.039303Z",
+    "agent_lines": 1734,
+    "human_added": 5,
+    "human_modified": 21,
+    "human_removed": 0,
+    "total_committed": 1760,
+    "agent_percentage": 98.52272727272727
+  }
+}

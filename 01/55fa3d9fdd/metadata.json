@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "0155fa3d9fdd",
+  "strategy": "manual-commit",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".github/workflows/pr-review-harness.yml",
+    ".harness/acceptance.criteria.json",
+    ".harness/policy.contract.json",
+    ".harness/schemas/browser-evidence.schema.json",
+    ".harness/schemas/risk-policy-report.schema.json",
+    "scripts/harness/browser_evidence_verify.py",
+    "scripts/harness/checks_resolver.py",
+    "scripts/harness/evidence_capture.py",
+    "scripts/harness/playwright_capture.mjs",
+    "scripts/harness/pr_packet.py",
+    "scripts/harness/pr_review_upsert.py",
+    "scripts/harness/risk_policy_gate.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/01/55fa3d9fdd/0/metadata.json",
+      "transcript": "/01/55fa3d9fdd/0/full.jsonl",
+      "context": "/01/55fa3d9fdd/0/context.md",
+      "content_hash": "/01/55fa3d9fdd/0/content_hash.txt",
+      "prompt": "/01/55fa3d9fdd/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 45,
+    "cache_creation_tokens": 47974,
+    "cache_read_tokens": 2002687,
+    "output_tokens": 697,
+    "api_call_count": 36
+  }
+}
