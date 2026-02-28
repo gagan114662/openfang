@@ -247,6 +247,7 @@ jobs:
             --findings artifacts/claude-findings.json \
             --head-sha "${{ needs.resolve-context.outputs.head_sha }}" \
             --max-attempts "${{ steps.cfg.outputs.max_attempts }}" \
+            --attempt-log /tmp/claude-remediation-attempts.json \
             --apply-cmd "${OPENFANG_CLAUDE_REMEDIATION_CMD}" \
             --result-out artifacts/remediation-result.json)
 
@@ -299,7 +300,10 @@ jobs:
           git config user.name "openfang-remediation-bot"
           git config user.email "openfang-remediation-bot@users.noreply.github.com"
 
-          git add -A
+          git add -A -- . \
+            ':(exclude)artifacts/**' \
+            ':(exclude).harness/state/remediation-attempts.json' \
+            ':(exclude).claude-findings-context.md'
           git commit -m "chore(harness): claude remediation for sha:${{ needs.resolve-context.outputs.head_sha }}" -m "claude-remediation: ${{ needs.resolve-context.outputs.head_sha }}"
           git push origin HEAD:${{ needs.resolve-context.outputs.head_ref }}
 
