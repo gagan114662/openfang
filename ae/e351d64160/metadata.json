@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "aee351d64160",
+  "strategy": "manual-commit",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/pr-review-harness.yml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ae/e351d64160/0/metadata.json",
+      "transcript": "/ae/e351d64160/0/full.jsonl",
+      "context": "/ae/e351d64160/0/context.md",
+      "content_hash": "/ae/e351d64160/0/content_hash.txt",
+      "prompt": "/ae/e351d64160/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 5,
+    "cache_creation_tokens": 14674,
+    "cache_read_tokens": 88860,
+    "output_tokens": 20,
+    "api_call_count": 3
+  }
+}
