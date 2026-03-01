@@ -8,6 +8,7 @@ use crate::types::{
 };
 use async_trait::async_trait;
 use futures::Stream;
+use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -20,6 +21,8 @@ use zeroize::Zeroizing;
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Initial backoff duration on API failures.
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+/// Max absolute jitter percent applied to exponential backoff.
+const BACKOFF_JITTER_MAX_PERCENT: i64 = 20;
 /// Telegram long-polling timeout (seconds) — sent as the `timeout` parameter to getUpdates.
 const LONG_POLL_TIMEOUT: u64 = 30;
 
@@ -141,6 +144,7 @@ impl ChannelAdapter for TelegramAdapter {
         tokio::spawn(async move {
             let mut offset: Option<i64> = None;
             let mut backoff = INITIAL_BACKOFF;
+            let mut retry_attempt: u32 = 0;
 
             loop {
                 // Check shutdown
@@ -177,9 +181,16 @@ impl ChannelAdapter for TelegramAdapter {
                 let resp = match result {
                     Ok(resp) => resp,
                     Err(e) => {
-                        warn!("Telegram getUpdates network error: {e}, retrying in {backoff:?}");
+                        retry_attempt = retry_attempt.saturating_add(1);
+                        warn!(
+                            error_kind = "network",
+                            attempt = retry_attempt,
+                            backoff_secs = backoff.as_secs_f64(),
+                            error = %e,
+                            "Telegram getUpdates failed; retrying"
+                        );
                         tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                        backoff = calculate_backoff_with_jitter(backoff, retry_attempt);
                         continue;
                     }
                 };
@@ -190,7 +201,12 @@ impl ChannelAdapter for TelegramAdapter {
                 if status.as_u16() == 429 {
                     let body: serde_json::Value = resp.json().await.unwrap_or_default();
                     let retry_after = body["parameters"]["retry_after"].as_u64().unwrap_or(5);
-                    warn!("Telegram rate limited, retry after {retry_after}s");
+                    warn!(
+                        error_kind = "rate_limited",
+                        attempt = retry_attempt,
+                        retry_after_secs = retry_after,
+                        "Telegram getUpdates rate limited"
+                    );
                     tokio::time::sleep(Duration::from_secs(retry_after)).await;
                     continue;
                 }
@@ -203,9 +219,17 @@ impl ChannelAdapter for TelegramAdapter {
 
                 if !status.is_success() {
                     let body_text = resp.text().await.unwrap_or_default();
-                    warn!("Telegram getUpdates failed ({status}): {body_text}, retrying in {backoff:?}");
+                    retry_attempt = retry_attempt.saturating_add(1);
+                    warn!(
+                        error_kind = "http_non_success",
+                        attempt = retry_attempt,
+                        backoff_secs = backoff.as_secs_f64(),
+                        http_status = %status,
+                        response_len = body_text.len(),
+                        "Telegram getUpdates failed; retrying"
+                    );
                     tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    backoff = calculate_backoff_with_jitter(backoff, retry_attempt);
                     continue;
                 }
 
@@ -213,15 +237,23 @@ impl ChannelAdapter for TelegramAdapter {
                 let body: serde_json::Value = match resp.json().await {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!("Telegram getUpdates parse error: {e}");
+                        retry_attempt = retry_attempt.saturating_add(1);
+                        warn!(
+                            error_kind = "parse",
+                            attempt = retry_attempt,
+                            backoff_secs = backoff.as_secs_f64(),
+                            error = %e,
+                            "Telegram getUpdates parse error; retrying"
+                        );
                         tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                        backoff = calculate_backoff_with_jitter(backoff, retry_attempt);
                         continue;
                     }
                 };
 
                 // Reset backoff on success
                 backoff = INITIAL_BACKOFF;
+                retry_attempt = 0;
 
                 if body["ok"].as_bool() != Some(true) {
                     warn!("Telegram getUpdates returned ok=false");
@@ -393,6 +425,26 @@ pub fn calculate_backoff(current: Duration) -> Duration {
     (current * 2).min(MAX_BACKOFF)
 }
 
+/// Calculate exponential backoff with bounded jitter.
+pub fn calculate_backoff_with_jitter(current: Duration, attempt: u32) -> Duration {
+    let base = calculate_backoff(current);
+
+    if attempt == 0 {
+        return base;
+    }
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(u64::from(attempt));
+    let jitter_percent = rng.gen_range(-BACKOFF_JITTER_MAX_PERCENT..=BACKOFF_JITTER_MAX_PERCENT);
+
+    let base_ms = i128::try_from(base.as_millis()).unwrap_or(i128::MAX);
+    let jittered_ms = base_ms + (base_ms * i128::from(jitter_percent)) / 100;
+
+    let min_ms = i128::try_from(INITIAL_BACKOFF.as_millis()).unwrap_or(0);
+    let max_ms = i128::try_from(MAX_BACKOFF.as_millis()).unwrap_or(i128::MAX);
+    let clamped_ms = jittered_ms.clamp(min_ms, max_ms);
+    Duration::from_millis(u64::try_from(clamped_ms).unwrap_or(u64::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,6 +582,22 @@ mod tests {
 
         let b4 = calculate_backoff(Duration::from_secs(60));
         assert_eq!(b4, Duration::from_secs(60)); // stays at cap
+    }
+
+    #[test]
+    fn test_backoff_with_jitter_bounds() {
+        for attempt in 1..=100 {
+            let backoff = calculate_backoff_with_jitter(Duration::from_secs(4), attempt);
+            assert!(backoff >= INITIAL_BACKOFF);
+            assert!(backoff <= MAX_BACKOFF);
+        }
+    }
+
+    #[test]
+    fn test_backoff_with_jitter_deterministic_for_attempt() {
+        let b1 = calculate_backoff_with_jitter(Duration::from_secs(4), 7);
+        let b2 = calculate_backoff_with_jitter(Duration::from_secs(4), 7);
+        assert_eq!(b1, b2);
     }
 
     #[test]

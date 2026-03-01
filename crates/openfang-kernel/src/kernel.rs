@@ -485,6 +485,22 @@ fn gethostname() -> Option<String> {
     }
 }
 
+fn build_sha() -> &'static str {
+    option_env!("OPENFANG_GIT_SHA")
+        .filter(|sha| !sha.trim().is_empty())
+        .unwrap_or("unknown")
+}
+
+fn sentry_release() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let sha = build_sha();
+    if sha == "unknown" {
+        format!("openfang@{version}")
+    } else {
+        format!("openfang@{version}+{sha}")
+    }
+}
+
 impl OpenFangKernel {
     /// Initialize Sentry AI Monitoring if configured.
     ///
@@ -501,7 +517,7 @@ impl OpenFangKernel {
         let guard = sentry::init((
             dsn.clone(),
             sentry::ClientOptions {
-                release: Some(env!("CARGO_PKG_VERSION").into()),
+                release: Some(sentry_release().into()),
                 environment: Some(config.sentry.environment.clone().into()),
                 traces_sample_rate: config.sentry.traces_sample_rate,
                 send_default_pii: config.sentry.include_prompts,
@@ -512,6 +528,8 @@ impl OpenFangKernel {
 
         // Set custom tags from config
         sentry::configure_scope(|scope| {
+            scope.set_tag("build_sha", build_sha());
+            scope.set_tag("build_version", env!("CARGO_PKG_VERSION"));
             for (key, value) in &config.sentry.tags {
                 scope.set_tag(key, value);
             }
