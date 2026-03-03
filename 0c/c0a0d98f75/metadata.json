@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "0cc0a0d98f75",
+  "strategy": "manual-commit",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "AGENTS.md",
+    "WORKTREE_SETUP.md",
+    "contracts/01-kill-panics.md",
+    "contracts/02-a2a-typed-errors.md",
+    "contracts/03-fix-tool-calls-bug.md",
+    "contracts/04-wasm-module-cache.md",
+    "contracts/05-api-rate-limiting.md",
+    "contracts/06-endpoint-rbac.md",
+    "contracts/07-budget-alerts.md",
+    "contracts/08-python-sandbox-hardening.md",
+    "contracts/09-a2a-dashboard-tab.md",
+    "contracts/10-a2a-persistent-tasks.md",
+    "merge-and-verify.sh",
+    "setup-worktrees.sh",
+    "verify-last-build.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0c/c0a0d98f75/0/metadata.json",
+      "transcript": "/0c/c0a0d98f75/0/full.jsonl",
+      "context": "",
+      "content_hash": "/0c/c0a0d98f75/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  }
+}

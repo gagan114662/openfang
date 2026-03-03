@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.4.8",
+  "checkpoint_id": "0cc0a0d98f75",
+  "session_id": "8d776b8b-3494-435a-ad27-4c07e77741ce",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-03T15:58:37.248127Z",
+  "branch": "codex/universal-pr-review-harness",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "contracts/01-kill-panics.md",
+    "contracts/04-wasm-module-cache.md",
+    "contracts/06-endpoint-rbac.md",
+    "verify-last-build.sh",
+    "WORKTREE_SETUP.md",
+    "contracts/03-fix-tool-calls-bug.md",
+    "contracts/02-a2a-typed-errors.md",
+    "contracts/05-api-rate-limiting.md",
+    "contracts/08-python-sandbox-hardening.md",
+    "contracts/10-a2a-persistent-tasks.md",
+    "setup-worktrees.sh",
+    "AGENTS.md",
+    "contracts/07-budget-alerts.md",
+    "contracts/09-a2a-dashboard-tab.md",
+    "merge-and-verify.sh"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-03T15:58:37.219143Z",
+    "agent_lines": 1260,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1260,
+    "agent_percentage": 100
+  }
+}
