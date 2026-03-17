@@ -1,0 +1,46 @@
+{
+  "actions": [],
+  "errors": [],
+  "generated_at": "2026-03-05T22:25:29.022288+00:00",
+  "local": {
+    "agent_count": 10,
+    "health_body": {
+      "status": "ok",
+      "version": "0.1.0"
+    },
+    "health_status_code": 200,
+    "health_url": "http://127.0.0.1:50051/api/health",
+    "heartbeat_request_id": "b4c67d6b-2df7-4173-a9c6-d9ba44809bf3",
+    "heartbeat_status_code": 200,
+    "heartbeat_url": "http://127.0.0.1:50051/api/status",
+    "pid": "51600"
+  },
+  "remote": {
+    "control_plane_service": {
+      "rc": 0,
+      "service": "openfang_control_plane.service",
+      "state": "inactive",
+      "stderr": ""
+    },
+    "host": "gagan-arora@192.168.40.234",
+    "openfang_service": {
+      "rc": 0,
+      "service": "openfang.service",
+      "state": "active",
+      "stderr": ""
+    },
+    "telegram_socket_count": {
+      "count": 0,
+      "rc": 0,
+      "stderr": ""
+    }
+  },
+  "sentry": {
+    "expected_query": "event.kind:api.request request.id:b4c67d6b-2df7-4173-a9c6-d9ba44809bf3",
+    "notes": [
+      "heartbeat endpoint emits canonical api.request logs",
+      "Telegram-originated activity should be searched under runtime.* event kinds"
+    ]
+  },
+  "status": "pass"
+}

@@ -28,7 +28,12 @@ QUALITY STANDARDS:
 
 RESEARCH:
 - When you encounter an unfamiliar API, error message, or library, use web_search or web_fetch to look it up.
-- Check official documentation before guessing at API usage."""
+- Check official documentation before guessing at API usage.
+
+SENTRY ACCESS:
+- For Sentry requests, always call the sentry_query tool first.
+- Do not claim Sentry data unless it came from sentry_query.
+- If approval is pending or config is missing, say exactly what is missing and how to approve (/approvals, /approve <id>)."""
 
 [[fallback_models]]
 provider = "groq"
@@ -40,7 +45,7 @@ max_llm_tokens_per_hour = 200000
 max_concurrent_tools = 10
 
 [capabilities]
-tools = ["file_read", "file_write", "file_list", "shell_exec", "web_search", "web_fetch", "memory_store", "memory_recall"]
+tools = ["file_read", "file_write", "file_list", "shell_exec", "web_search", "web_fetch", "sentry_query", "memory_store", "memory_recall"]
 network = ["*"]
 memory_read = ["*"]
 memory_write = ["self.*"]

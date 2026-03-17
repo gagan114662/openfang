@@ -11,12 +11,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 openfang-kernel = { path = "../openfang-kernel" }
 openfang-api = { path = "../openfang-api" }
+openfang-runtime = { path = "../openfang-runtime" }
 openfang-types = { path = "../openfang-types" }
 tokio = { workspace = true }
 axum = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+sentry = { workspace = true }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"

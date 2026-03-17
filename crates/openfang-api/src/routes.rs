@@ -2,6 +2,7 @@
 
 use crate::types::*;
 use axum::extract::{Path, Query, State};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -11,10 +12,20 @@ use openfang_kernel::workflow::{
     ErrorMode, StepAgent, StepMode, Workflow, WorkflowId, WorkflowStep,
 };
 use openfang_kernel::OpenFangKernel;
+use openfang_memory::facts::FactEventStore;
 use openfang_runtime::kernel_handle::KernelHandle;
+use openfang_runtime::sentry_logs::{
+    capture_structured_log, current_event_context, flatten_with_prefix, record_artifact,
+};
 use openfang_runtime::tool_runner::builtin_tool_definitions;
 use openfang_types::agent::{AgentId, AgentIdentity, AgentManifest};
+use openfang_types::facts::{ArtifactRecord, FactEventFilter};
+use sentry::Level;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::hash::Hasher;
+use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
@@ -33,6 +44,341 @@ pub struct AppState {
     pub channels_config: tokio::sync::RwLock<openfang_types::config::ChannelsConfig>,
     /// Notify handle to trigger graceful HTTP server shutdown from the API.
     pub shutdown_notify: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StructuredTelemetryRequest {
+    pub body: String,
+    #[serde(default = "default_structured_telemetry_level")]
+    pub level: String,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, serde_json::Value>,
+}
+
+fn default_structured_telemetry_level() -> String {
+    "info".to_string()
+}
+
+fn parse_log_level(value: &str) -> Level {
+    match value.to_ascii_lowercase().as_str() {
+        "trace" | "debug" | "info" => Level::Info,
+        "warn" | "warning" => Level::Warning,
+        "error" => Level::Error,
+        "fatal" => Level::Fatal,
+        _ => Level::Info,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuardReportRequest {
+    pub kind: String,
+    #[serde(default)]
+    pub host_role: Option<String>,
+    #[serde(default)]
+    pub host_name: Option<String>,
+    #[serde(default)]
+    pub service_name: Option<String>,
+    #[serde(default)]
+    pub service_state: Option<String>,
+    #[serde(default)]
+    pub daemon_pid: Option<u64>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub guard_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub primary_host: Option<String>,
+    #[serde(default)]
+    pub telegram_owner: Option<String>,
+    #[serde(default)]
+    pub primary_sentry_browser_host: Option<String>,
+    #[serde(default)]
+    pub fallback_sentry_browser_host: Option<String>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+    #[serde(default)]
+    pub remediation_action: Option<String>,
+    #[serde(default)]
+    pub remediation_result: Option<String>,
+    #[serde(default)]
+    pub payload: Option<serde_json::Value>,
+}
+
+fn normalize_guard_outcome(kind: &str, outcome: Option<&str>) -> &'static str {
+    match outcome.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if matches!(value.as_str(), "pass" | "success" | "ok") => "success",
+        Some(value) if matches!(value.as_str(), "fail" | "failed" | "error") => "error",
+        _ if kind.contains("failed") => "error",
+        _ => "success",
+    }
+}
+
+fn guard_level(outcome: &str) -> Level {
+    if outcome == "success" {
+        Level::Info
+    } else {
+        Level::Warning
+    }
+}
+
+/// POST /api/telemetry/structured — Emit a canonical structured log event.
+pub async fn emit_structured_telemetry(
+    Json(req): Json<StructuredTelemetryRequest>,
+) -> impl IntoResponse {
+    if !req.attributes.contains_key("event.kind") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "event.kind is required"})),
+        );
+    }
+
+    let guarded = capture_structured_log(parse_log_level(&req.level), req.body, req.attributes);
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "status": "accepted",
+            "dropped_fields": guarded.dropped_fields,
+            "truncated_fields": guarded.truncated_fields,
+            "serialized_bytes": guarded.serialized_bytes,
+        })),
+    )
+}
+
+/// POST /api/ops/guard/report — Emit a canonical ops.guard.* report.
+pub async fn report_ops_guard(Json(req): Json<GuardReportRequest>) -> impl IntoResponse {
+    let event_kind = req.kind.trim().to_string();
+    if !event_kind.starts_with("ops.guard.") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "kind must start with ops.guard."})),
+        );
+    }
+
+    let normalized_outcome = normalize_guard_outcome(&event_kind, req.outcome.as_deref());
+    let related_request_id = req
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    let mut attrs = BTreeMap::new();
+    attrs.insert("event.kind".to_string(), serde_json::json!(event_kind));
+    attrs.insert(
+        "agent.name".to_string(),
+        serde_json::json!("vacation-guard"),
+    );
+    attrs.insert("channel.kind".to_string(), serde_json::json!("ops"));
+    attrs.insert("outcome".to_string(), serde_json::json!(normalized_outcome));
+    if let Some(request_id) = related_request_id.clone() {
+        attrs.insert(
+            "request.id".to_string(),
+            serde_json::json!(request_id.clone()),
+        );
+        attrs.insert("run.id".to_string(), serde_json::json!(request_id.clone()));
+        attrs.insert("trace.id".to_string(), serde_json::json!(request_id));
+    }
+    if let Some(failure_reason) = req.failure_reason.as_ref() {
+        attrs.insert(
+            "failure_reason".to_string(),
+            serde_json::json!(failure_reason),
+        );
+    }
+
+    attrs.extend(flatten_with_prefix(
+        "payload.guard",
+        &serde_json::json!({
+            "kind": event_kind,
+            "host_role": &req.host_role,
+            "host_name": &req.host_name,
+            "service_name": &req.service_name,
+            "service_state": &req.service_state,
+            "daemon_pid": req.daemon_pid,
+            "guard_interval_secs": req.guard_interval_secs,
+            "reported_outcome": &req.outcome,
+            "failure_reason": &req.failure_reason,
+            "primary_host": &req.primary_host,
+            "telegram_owner": &req.telegram_owner,
+            "primary_sentry_browser_host": &req.primary_sentry_browser_host,
+            "fallback_sentry_browser_host": &req.fallback_sentry_browser_host,
+            "blockers": &req.blockers,
+            "remediation_action": &req.remediation_action,
+            "remediation_result": &req.remediation_result,
+        }),
+    ));
+    if let Some(payload) = req.payload.as_ref() {
+        attrs.extend(flatten_with_prefix("payload.report", payload));
+    }
+
+    let guarded = capture_structured_log(guard_level(normalized_outcome), &event_kind, attrs);
+    let event_id = guarded
+        .json_attributes
+        .get("event.id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "status": "accepted",
+            "event_id": event_id,
+            "event_kind": event_kind,
+            "outcome": normalized_outcome,
+            "dropped_fields": guarded.dropped_fields,
+            "truncated_fields": guarded.truncated_fields,
+            "serialized_bytes": guarded.serialized_bytes,
+        })),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DataEventsQuery {
+    pub event_kind: Option<String>,
+    pub agent_id: Option<String>,
+    pub run_id: Option<String>,
+    pub session_id: Option<String>,
+    pub request_id: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub outcome: Option<String>,
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+}
+
+fn encode_event_cursor(event: &openfang_types::facts::FactEventRecord) -> String {
+    format!("{}|{}", event.occurred_at, event.event_id)
+}
+
+fn maybe_backfill_guard_history(state: &AppState) {
+    let store = FactEventStore::new(state.kernel.memory.usage_conn());
+    let needs_backfill = store
+        .has_event_kind_prefix("ops.guard")
+        .map(|present| !present)
+        .unwrap_or(false);
+    if !needs_backfill {
+        return;
+    }
+    let history_dir = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join("artifacts").join("vacation-guard").join("history"));
+    if let Some(history_dir) = history_dir {
+        let _ = store.backfill_vacation_guard_history(&history_dir, 250);
+    }
+}
+
+/// GET /api/data/events — Query canonical fact events.
+pub async fn get_data_events(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DataEventsQuery>,
+) -> impl IntoResponse {
+    maybe_backfill_guard_history(&state);
+    let store = FactEventStore::new(state.kernel.memory.usage_conn());
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let filter = FactEventFilter {
+        event_kind: query.event_kind,
+        agent_id: query.agent_id,
+        run_id: query.run_id,
+        session_id: query.session_id,
+        request_id: query.request_id,
+        since: query.since,
+        until: query.until,
+        outcome: query.outcome,
+        cursor: query.cursor,
+        limit: Some(limit + 1),
+    };
+    match store.query(&filter, true) {
+        Ok(mut events) => {
+            let has_more = events.len() > limit;
+            if has_more {
+                events.truncate(limit);
+            }
+            let next_cursor = if has_more {
+                events.last().map(encode_event_cursor)
+            } else {
+                None
+            };
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "events": events,
+                    "next_cursor": next_cursor,
+                    "has_more": has_more,
+                })),
+            )
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        ),
+    }
+}
+
+/// GET /api/data/runs/{run_id} — Return a run summary with events and artifacts.
+pub async fn get_data_run(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+) -> impl IntoResponse {
+    maybe_backfill_guard_history(&state);
+    let store = FactEventStore::new(state.kernel.memory.usage_conn());
+    match store.get_run(&run_id) {
+        Ok(run) if run.event_count > 0 => (StatusCode::OK, Json(serde_json::json!(run))),
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Run not found"})),
+        ),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        ),
+    }
+}
+
+/// GET /api/data/events/export — Export canonical fact events as NDJSON.
+pub async fn export_data_events(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DataEventsQuery>,
+) -> impl IntoResponse {
+    maybe_backfill_guard_history(&state);
+    let store = FactEventStore::new(state.kernel.memory.usage_conn());
+    let filter = FactEventFilter {
+        event_kind: query.event_kind,
+        agent_id: query.agent_id,
+        run_id: query.run_id,
+        session_id: query.session_id,
+        request_id: query.request_id,
+        since: query.since,
+        until: query.until,
+        outcome: query.outcome,
+        cursor: query.cursor,
+        limit: Some(query.limit.unwrap_or(1_000).clamp(1, 5_000)),
+    };
+    match store.query(&filter, false) {
+        Ok(events) => {
+            let mut body = String::new();
+            for event in events {
+                body.push_str(
+                    &serde_json::to_string(&event.event).unwrap_or_else(|_| "{}".to_string()),
+                );
+                body.push('\n');
+            }
+            (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/x-ndjson".to_string())],
+                body,
+            )
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 /// POST /api/agents — Spawn a new agent.
@@ -5240,6 +5586,1203 @@ pub async fn a2a_external_task_status(
     }
 }
 
+// ── MiroFish Simulation Proxy ────────────────────────────────────────────
+
+fn mirofish_client_from_state(
+    state: &AppState,
+) -> Result<openfang_runtime::mirofish::MirofishClient, (StatusCode, Json<serde_json::Value>)> {
+    let cfg = &state.kernel.config.mirofish;
+    if !cfg.enabled {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(
+                serde_json::json!({"error": "MiroFish integration is not enabled. Set [mirofish] enabled=true in config.toml"}),
+            ),
+        ));
+    }
+    Ok(openfang_runtime::mirofish::MirofishClient::from_config(cfg))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MirofishAnalyzeFolderRequest {
+    pub folder_path: String,
+    #[serde(default)]
+    pub topic: Option<String>,
+    #[serde(default)]
+    pub rounds: Option<u32>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FolderScanSummary {
+    pub mode: String,
+    pub root: String,
+    pub files_considered: usize,
+    pub files_included: usize,
+    pub files_skipped: usize,
+    pub truncated_files: usize,
+    pub total_document_bytes: usize,
+}
+
+#[derive(Debug)]
+struct FolderScanResult {
+    documents: Vec<String>,
+    summary: FolderScanSummary,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScanSettings {
+    max_files: usize,
+    max_file_bytes: usize,
+    max_file_bytes_hard: usize,
+    max_total_bytes: usize,
+}
+
+const FAST_ALLOWED_EXTENSIONS: &[&str] = &[
+    "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
+    "kts", "md", "mjs", "py", "rb", "rs", "sql", "swift", "toml", "ts", "tsx", "txt", "xml",
+    "yaml", "yml",
+];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".idea",
+    ".venv",
+    ".vscode",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+];
+
+fn scan_settings_for_mode(mode: &str) -> Result<ScanSettings, String> {
+    match mode {
+        "fast" => Ok(ScanSettings {
+            max_files: 120,
+            max_file_bytes: 12 * 1024,
+            max_file_bytes_hard: 256 * 1024,
+            max_total_bytes: 512 * 1024,
+        }),
+        "deep" => Ok(ScanSettings {
+            max_files: 400,
+            max_file_bytes: 24 * 1024,
+            max_file_bytes_hard: 1024 * 1024,
+            max_total_bytes: 2 * 1024 * 1024,
+        }),
+        _ => Err(format!(
+            "Unsupported scan mode '{mode}'. Allowed values: fast, deep"
+        )),
+    }
+}
+
+fn stable_path_hash(value: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(value.as_bytes());
+    format!("{:016x}", hasher.finish())
+}
+
+fn normalized_scan_mode(mode: Option<&str>) -> Result<String, String> {
+    let normalized = mode
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("fast")
+        .to_ascii_lowercase();
+    scan_settings_for_mode(&normalized)?;
+    Ok(normalized)
+}
+
+fn canonicalize_allowed_roots(
+    cfg: &openfang_types::config::MirofishConfig,
+) -> Result<Vec<PathBuf>, String> {
+    if cfg.allowed_local_roots.is_empty() {
+        return Err("MiroFish folder analysis requires [mirofish].allowed_local_roots".to_string());
+    }
+
+    let mut roots = Vec::new();
+    for root in &cfg.allowed_local_roots {
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if !path.is_absolute() {
+            return Err(format!(
+                "MiroFish allowed root must be an absolute path: '{trimmed}'"
+            ));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| format!("Unable to resolve allowed root '{trimmed}': {e}"))?;
+        if !canonical.is_dir() {
+            return Err(format!(
+                "MiroFish allowed root is not a directory: '{}'",
+                canonical.display()
+            ));
+        }
+        roots.push(canonical);
+    }
+
+    if roots.is_empty() {
+        return Err(
+            "MiroFish folder analysis requires at least one valid allowed_local_roots entry"
+                .to_string(),
+        );
+    }
+    Ok(roots)
+}
+
+fn canonicalize_target_folder(folder_path: &str) -> Result<PathBuf, String> {
+    let trimmed = folder_path.trim();
+    if trimmed.is_empty() {
+        return Err("folder_path is required".to_string());
+    }
+    let path = PathBuf::from(trimmed);
+    if !path.is_absolute() {
+        return Err("folder_path must be an absolute path".to_string());
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("Unable to resolve folder_path: {e}"))?;
+    if !canonical.is_dir() {
+        return Err("folder_path must point to a directory".to_string());
+    }
+    Ok(canonical)
+}
+
+fn folder_allowed(target: &StdPath, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots.iter().any(|root| target.starts_with(root))
+}
+
+fn is_allowed_text_extension(path: &StdPath) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|v| v.to_str())
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_default();
+    FAST_ALLOWED_EXTENSIONS.contains(&ext.as_str())
+}
+
+fn should_skip_dir(path: &StdPath) -> bool {
+    let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+        return false;
+    };
+    let lowered = name.to_ascii_lowercase();
+    SKIP_DIRS.iter().any(|v| lowered == *v)
+}
+
+fn truncate_utf8(input: &str, max_bytes: usize) -> (&str, bool) {
+    if input.len() <= max_bytes {
+        return (input, false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&input[..end], true)
+}
+
+fn scan_folder_documents(root: &StdPath, mode: &str) -> Result<FolderScanResult, String> {
+    let settings = scan_settings_for_mode(mode)?;
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    let mut skipped_files = 0usize;
+
+    while let Some(dir) = stack.pop() {
+        let read_dir = match std::fs::read_dir(&dir) {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+
+        let mut entries = Vec::new();
+        for entry in read_dir {
+            match entry {
+                Ok(value) => entries.push(value.path()),
+                Err(_) => skipped_files += 1,
+            }
+        }
+        entries.sort();
+
+        for path in entries {
+            if path.is_dir() {
+                if should_skip_dir(&path) {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+
+    let files_considered = files.len();
+    let mut files_included = 0usize;
+    let mut truncated_files = 0usize;
+    let mut total_document_bytes = 0usize;
+    let mut documents = Vec::new();
+
+    for (idx, path) in files.iter().enumerate() {
+        if files_included >= settings.max_files {
+            skipped_files += files.len().saturating_sub(idx);
+            break;
+        }
+        if !is_allowed_text_extension(path) {
+            skipped_files += 1;
+            continue;
+        }
+
+        let metadata = match path.metadata() {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+        if metadata.len() as usize > settings.max_file_bytes_hard {
+            skipped_files += 1;
+            continue;
+        }
+
+        let bytes = match std::fs::read(path) {
+            Ok(value) => value,
+            Err(_) => {
+                skipped_files += 1;
+                continue;
+            }
+        };
+        if bytes.contains(&0) {
+            skipped_files += 1;
+            continue;
+        }
+
+        let content = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+        if content.trim().is_empty() {
+            skipped_files += 1;
+            continue;
+        }
+
+        let remaining_total = settings.max_total_bytes.saturating_sub(total_document_bytes);
+        if remaining_total == 0 {
+            skipped_files += files.len().saturating_sub(idx);
+            break;
+        }
+        let allowed_bytes = settings.max_file_bytes.min(remaining_total);
+        let (snippet, truncated) = truncate_utf8(&content, allowed_bytes);
+        if snippet.trim().is_empty() {
+            skipped_files += 1;
+            continue;
+        }
+        if truncated {
+            truncated_files += 1;
+        }
+
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let rel_display = rel.to_string_lossy().replace('\\', "/");
+        documents.push(format!("FILE: {rel_display}\n{snippet}"));
+
+        files_included += 1;
+        total_document_bytes += snippet.len();
+    }
+
+    if documents.is_empty() {
+        return Err("No eligible text/code files found for simulation scan".to_string());
+    }
+
+    Ok(FolderScanResult {
+        documents,
+        summary: FolderScanSummary {
+            mode: mode.to_string(),
+            root: root.display().to_string(),
+            files_considered,
+            files_included,
+            files_skipped: skipped_files,
+            truncated_files,
+            total_document_bytes,
+        },
+    })
+}
+
+fn should_trigger_mirofish(topic: Option<&str>) -> (bool, String) {
+    let Some(topic) = topic.map(str::trim).filter(|v| !v.is_empty()) else {
+        return (
+            true,
+            "No topic provided; defaulting to simulation for exploratory analysis".to_string(),
+        );
+    };
+
+    let normalized = topic.to_ascii_lowercase();
+    let dynamic_keywords = [
+        "forecast",
+        "predict",
+        "scenario",
+        "what if",
+        "counterfactual",
+        "system dynamics",
+        "uncertain",
+        "risk",
+        "simulate",
+        "simulation",
+        "trend",
+        "cascade",
+        "future",
+        "emergent",
+    ];
+    if let Some(keyword) = dynamic_keywords.iter().find(|kw| normalized.contains(*kw)) {
+        return (
+            true,
+            format!("Topic matched dynamic-simulation keyword '{keyword}'"),
+        );
+    }
+
+    let static_keywords = [
+        "summarize",
+        "summary",
+        "refactor",
+        "lint",
+        "format",
+        "bug fix",
+        "syntax",
+        "readme",
+        "explain",
+        "document",
+    ];
+    if let Some(keyword) = static_keywords.iter().find(|kw| normalized.contains(*kw)) {
+        return (
+            false,
+            format!("Topic matched static-analysis keyword '{keyword}'"),
+        );
+    }
+
+    (
+        false,
+        "Topic appears static; simulation skipped by heuristic gate".to_string(),
+    )
+}
+
+fn make_project_name(folder: &StdPath, run_id: &str) -> String {
+    let base = folder
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or("local-folder");
+    let slug: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let short_run = run_id.get(0..8).unwrap_or(run_id);
+    format!("{slug}-{short_run}")
+}
+
+fn capture_mirofish_stage_log(
+    level: Level,
+    event_kind: &str,
+    body: &str,
+    run_id: &str,
+    request_id: &str,
+    trace_id: &str,
+    folder_path_hash: &str,
+    scan_mode: &str,
+    graph_id: Option<&str>,
+    simulation_id: Option<&str>,
+    extra: BTreeMap<String, serde_json::Value>,
+) {
+    let mut attrs = BTreeMap::new();
+    attrs.insert("event.kind".to_string(), serde_json::json!(event_kind));
+    attrs.insert("event.category".to_string(), serde_json::json!("mirofish"));
+    attrs.insert("run.id".to_string(), serde_json::json!(run_id));
+    attrs.insert("request.id".to_string(), serde_json::json!(request_id));
+    attrs.insert("trace.id".to_string(), serde_json::json!(trace_id));
+    attrs.insert(
+        "folder.path_hash".to_string(),
+        serde_json::json!(folder_path_hash),
+    );
+    attrs.insert("scan.mode".to_string(), serde_json::json!(scan_mode));
+    if let Some(graph_id) = graph_id {
+        attrs.insert("graph_id".to_string(), serde_json::json!(graph_id));
+    }
+    if let Some(simulation_id) = simulation_id {
+        attrs.insert(
+            "simulation_id".to_string(),
+            serde_json::json!(simulation_id),
+        );
+    }
+    attrs.extend(extra);
+    capture_structured_log(level, body, attrs);
+}
+
+/// GET /api/mirofish/health
+pub async fn mirofish_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let status = client.health().await;
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(&status).unwrap_or_default()),
+    )
+}
+
+/// POST /api/mirofish/analyze-folder
+pub async fn mirofish_analyze_folder(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<MirofishAnalyzeFolderRequest>,
+) -> impl IntoResponse {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let context = current_event_context().unwrap_or_default();
+    let request_id = context
+        .request_id
+        .clone()
+        .or_else(|| context.run_id.clone())
+        .unwrap_or_else(|| run_id.clone());
+    let trace_id = context.trace_id.clone().unwrap_or_else(|| request_id.clone());
+    let folder_path_hash = stable_path_hash(&body.folder_path);
+    let scan_mode = match normalized_scan_mode(body.mode.as_deref()) {
+        Ok(mode) => mode,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "error": error,
+                })),
+            )
+        }
+    };
+
+    let mut timeline = vec![serde_json::json!({
+        "stage": "scan",
+        "status": "started",
+    })];
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.folder.scan.started",
+        "mirofish folder scan started",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        None,
+        None,
+        BTreeMap::new(),
+    );
+
+    let cfg = &state.kernel.config.mirofish;
+    if !cfg.enabled {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "status": "failed",
+                "run_id": run_id,
+                "error": "MiroFish integration is not enabled. Set [mirofish] enabled=true in config.toml",
+            })),
+        );
+    }
+
+    let allowed_roots = match canonicalize_allowed_roots(cfg) {
+        Ok(roots) => roots,
+        Err(error) => {
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.folder.scan.failed",
+                "mirofish folder scan failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                None,
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "scan",
+                    "error": error,
+                })),
+            );
+        }
+    };
+
+    let target_folder = match canonicalize_target_folder(&body.folder_path) {
+        Ok(path) => path,
+        Err(error) => {
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.folder.scan.failed",
+                "mirofish folder scan failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                None,
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "scan",
+                    "error": error,
+                })),
+            );
+        }
+    };
+
+    if !folder_allowed(&target_folder, &allowed_roots) {
+        let error = format!(
+            "folder_path '{}' is outside [mirofish].allowed_local_roots",
+            target_folder.display()
+        );
+        capture_mirofish_stage_log(
+            Level::Warning,
+            "mirofish.folder.scan.failed",
+            "mirofish folder scan denied by allowlist",
+            &run_id,
+            &request_id,
+            &trace_id,
+            &folder_path_hash,
+            &scan_mode,
+            None,
+            None,
+            BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "status": "failed",
+                "run_id": run_id,
+                "failed_stage": "scan",
+                "error": error,
+            })),
+        );
+    }
+
+    let scan_root = target_folder.clone();
+    let scan_mode_clone = scan_mode.clone();
+    let scan = match tokio::task::spawn_blocking(move || scan_folder_documents(&scan_root, &scan_mode_clone)).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.folder.scan.failed",
+                "mirofish folder scan failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                None,
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "scan",
+                    "error": error,
+                })),
+            );
+        }
+        Err(error) => {
+            let message = format!("Scan task failed: {error}");
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.folder.scan.failed",
+                "mirofish folder scan task failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                None,
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(message.clone()))]),
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "scan",
+                    "error": message,
+                })),
+            );
+        }
+    };
+
+    timeline.push(serde_json::json!({
+        "stage": "scan",
+        "status": "completed",
+        "summary": &scan.summary,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.folder.scan.completed",
+        "mirofish folder scan completed",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        None,
+        None,
+        BTreeMap::from([
+            (
+                "files_included".to_string(),
+                serde_json::json!(scan.summary.files_included),
+            ),
+            (
+                "files_skipped".to_string(),
+                serde_json::json!(scan.summary.files_skipped),
+            ),
+            (
+                "total_document_bytes".to_string(),
+                serde_json::json!(scan.summary.total_document_bytes),
+            ),
+        ]),
+    );
+
+    let (should_run, decision_reason) = should_trigger_mirofish(body.topic.as_deref());
+    timeline.push(serde_json::json!({
+        "stage": "decision",
+        "status": if should_run { "run" } else { "skip" },
+        "reason": decision_reason,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.autotrigger.decision",
+        "mirofish auto-trigger decision",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        None,
+        None,
+        BTreeMap::from([
+            ("auto_trigger".to_string(), serde_json::json!(should_run)),
+            ("reason".to_string(), serde_json::json!(decision_reason.clone())),
+        ]),
+    );
+
+    if !should_run {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "skipped",
+                "run_id": run_id,
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "scan_summary": scan.summary,
+                "timeline": timeline,
+                "auto_trigger": {
+                    "should_run": false,
+                    "reason": decision_reason,
+                },
+            })),
+        );
+    }
+
+    let client = openfang_runtime::mirofish::MirofishClient::from_config(cfg);
+    let topic = body
+        .topic
+        .clone()
+        .unwrap_or_else(|| "Forecast likely risks and failure cascades in this codebase".to_string());
+    let project_name = make_project_name(&target_folder, &run_id);
+
+    timeline.push(serde_json::json!({
+        "stage": "graph_build",
+        "status": "started",
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.graph.build.started",
+        "mirofish graph build started",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        None,
+        None,
+        BTreeMap::from([(
+            "project_name".to_string(),
+            serde_json::json!(project_name.clone()),
+        )]),
+    );
+
+    let graph = match client
+        .build_graph(&project_name, Some(topic.as_str()), &scan.documents)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            timeline.push(serde_json::json!({
+                "stage": "graph_build",
+                "status": "failed",
+                "error": error,
+            }));
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.graph.build.failed",
+                "mirofish graph build failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                None,
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "graph_build",
+                    "error": error,
+                    "scan_summary": scan.summary,
+                    "timeline": timeline,
+                })),
+            );
+        }
+    };
+
+    timeline.push(serde_json::json!({
+        "stage": "graph_build",
+        "status": "completed",
+        "graph_id": graph.graph_id,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.graph.build.completed",
+        "mirofish graph build completed",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        Some(&graph.graph_id),
+        None,
+        BTreeMap::from([(
+            "entity_count".to_string(),
+            serde_json::json!(graph.entity_count),
+        )]),
+    );
+
+    timeline.push(serde_json::json!({
+        "stage": "simulation",
+        "status": "started",
+        "graph_id": graph.graph_id,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.simulation.started",
+        "mirofish simulation started",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        Some(&graph.graph_id),
+        None,
+        BTreeMap::new(),
+    );
+
+    let simulation = match client
+        .create_simulation(&graph.graph_id, Some(&graph.project_id), &topic, body.rounds)
+        .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            timeline.push(serde_json::json!({
+                "stage": "simulation",
+                "status": "failed",
+                "error": error,
+            }));
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.simulation.failed",
+                "mirofish simulation failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                Some(&graph.graph_id),
+                None,
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "simulation",
+                    "error": error,
+                    "graph_id": graph.graph_id,
+                    "scan_summary": scan.summary,
+                    "timeline": timeline,
+                })),
+            );
+        }
+    };
+
+    timeline.push(serde_json::json!({
+        "stage": "simulation",
+        "status": "completed",
+        "simulation_id": simulation.id,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.simulation.completed",
+        "mirofish simulation completed",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        Some(&graph.graph_id),
+        Some(&simulation.id),
+        BTreeMap::from([(
+            "simulation_status".to_string(),
+            serde_json::json!(simulation.status),
+        )]),
+    );
+
+    timeline.push(serde_json::json!({
+        "stage": "report",
+        "status": "started",
+        "simulation_id": simulation.id,
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.report.started",
+        "mirofish report generation started",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        Some(&graph.graph_id),
+        Some(&simulation.id),
+        BTreeMap::new(),
+    );
+
+    let report = match client.generate_report(&simulation.id, Some(&topic)).await {
+        Ok(value) => value,
+        Err(error) => {
+            timeline.push(serde_json::json!({
+                "stage": "report",
+                "status": "failed",
+                "error": error,
+            }));
+            capture_mirofish_stage_log(
+                Level::Warning,
+                "mirofish.report.failed",
+                "mirofish report generation failed",
+                &run_id,
+                &request_id,
+                &trace_id,
+                &folder_path_hash,
+                &scan_mode,
+                Some(&graph.graph_id),
+                Some(&simulation.id),
+                BTreeMap::from([("error".to_string(), serde_json::json!(error.clone()))]),
+            );
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "status": "failed",
+                    "run_id": run_id,
+                    "failed_stage": "report",
+                    "error": error,
+                    "graph_id": graph.graph_id,
+                    "simulation_id": simulation.id,
+                    "scan_summary": scan.summary,
+                    "timeline": timeline,
+                })),
+            );
+        }
+    };
+
+    timeline.push(serde_json::json!({
+        "stage": "report",
+        "status": "completed",
+    }));
+    capture_mirofish_stage_log(
+        Level::Info,
+        "mirofish.report.completed",
+        "mirofish report generation completed",
+        &run_id,
+        &request_id,
+        &trace_id,
+        &folder_path_hash,
+        &scan_mode,
+        Some(&graph.graph_id),
+        Some(&simulation.id),
+        BTreeMap::new(),
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "completed",
+            "run_id": run_id,
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "graph_id": graph.graph_id,
+            "simulation_id": simulation.id,
+            "report": report,
+            "scan_summary": scan.summary,
+            "timeline": timeline,
+            "auto_trigger": {
+                "should_run": true,
+                "reason": decision_reason,
+            },
+        })),
+    )
+}
+
+/// POST /api/mirofish/graph/build
+pub async fn mirofish_graph_build(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let project_name = body["project_name"].as_str().unwrap_or("default");
+    let simulation_requirement = body["simulation_requirement"].as_str();
+    let documents: Vec<String> = body["documents"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    match client
+        .build_graph(project_name, simulation_requirement, &documents)
+        .await
+    {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&result).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// GET /api/mirofish/graph/{graph_id}/entities
+pub async fn mirofish_graph_entities(
+    State(state): State<Arc<AppState>>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match client.get_entities(&graph_id).await {
+        Ok(entities) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&entities).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// POST /api/mirofish/simulations
+pub async fn mirofish_create_simulation(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let graph_id = match body["graph_id"].as_str() {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Missing graph_id"})),
+            )
+        }
+    };
+    let topic = body["topic"].as_str().unwrap_or("default");
+    let rounds = body["rounds"].as_u64().map(|r| r as u32);
+    let project_id = body["project_id"].as_str();
+    match client
+        .create_simulation(graph_id, project_id, topic, rounds)
+        .await
+    {
+        Ok(sim) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&sim).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// POST /api/mirofish/simulations/{id}/prepare
+pub async fn mirofish_prepare_simulation(
+    State(state): State<Arc<AppState>>,
+    Path(sim_id): Path<String>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match client.prepare_simulation(&sim_id).await {
+        Ok(info) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&info).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// POST /api/mirofish/simulations/{id}/run
+pub async fn mirofish_run_simulation(
+    State(state): State<Arc<AppState>>,
+    Path(sim_id): Path<String>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match client.run_simulation(&sim_id, None).await {
+        Ok(info) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&info).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// GET /api/mirofish/simulations/{id}/status
+pub async fn mirofish_simulation_status(
+    State(state): State<Arc<AppState>>,
+    Path(sim_id): Path<String>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    match client.get_status(&sim_id).await {
+        Ok(info) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&info).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// POST /api/mirofish/simulations/{id}/interview
+pub async fn mirofish_interview(
+    State(state): State<Arc<AppState>>,
+    Path(sim_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let agent_name = match body["agent_name"].as_str() {
+        Some(n) => n,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Missing agent_name"})),
+            )
+        }
+    };
+    let question = match body["question"].as_str() {
+        Some(q) => q,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Missing question"})),
+            )
+        }
+    };
+    match client.interview(&sim_id, agent_name, question).await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&result).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
+/// POST /api/mirofish/simulations/{id}/report
+pub async fn mirofish_report(
+    State(state): State<Arc<AppState>>,
+    Path(sim_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = match mirofish_client_from_state(&state) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let topic = body["topic"].as_str();
+    match client.generate_report(&sim_id, topic).await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&result).unwrap_or_default()),
+        ),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
+        ),
+    }
+}
+
 // ── MCP HTTP Endpoint ───────────────────────────────────────────────────
 
 /// POST /mcp — Handle MCP JSON-RPC requests over HTTP.
@@ -5913,6 +7456,7 @@ pub async fn test_provider(
                 temperature: 0.0,
                 system: None,
                 thinking: None,
+                sentry_parent_span: None,
             };
             match driver.complete(test_req).await {
                 Ok(_) => {
@@ -6207,6 +7751,11 @@ fn get_config_field_type(channel: &str, field: &str) -> ConfigFieldType {
 
         // Mumble ports
         ("mumble", "port") => ConfigFieldType::Integer,
+
+        // MiroFish
+        ("mirofish", "enabled") => ConfigFieldType::Boolean,
+        ("mirofish", "timeout_secs") => ConfigFieldType::Integer,
+        ("mirofish", "allowed_local_roots") => ConfigFieldType::StringArray,
 
         // Default to string for unknown fields
         _ => ConfigFieldType::String,
@@ -7734,6 +9283,49 @@ pub async fn upload_file(
     } else {
         None
     };
+
+    let context = current_event_context().unwrap_or_default();
+    record_artifact(ArtifactRecord {
+        artifact_id: file_id.clone(),
+        run_id: context.run_id,
+        session_id: context.session_id,
+        agent_id: Some(id.clone()),
+        artifact_kind: "upload".to_string(),
+        storage_path: file_path.to_string_lossy().to_string(),
+        content_type: Some(content_type.clone()),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        metadata_json: serde_json::json!({
+            "filename": filename.clone(),
+            "size": size,
+            "transcription_present": transcription.is_some(),
+        }),
+    });
+
+    let mut attrs = BTreeMap::new();
+    attrs.insert(
+        "event.kind".to_string(),
+        serde_json::json!("artifact.recorded"),
+    );
+    attrs.insert(
+        "artifact.id".to_string(),
+        serde_json::json!(file_id.clone()),
+    );
+    attrs.insert(
+        "artifact.ids".to_string(),
+        serde_json::json!([file_id.clone()]),
+    );
+    attrs.insert("agent.id".to_string(), serde_json::json!(id.clone()));
+    attrs.insert("outcome".to_string(), serde_json::json!("success"));
+    attrs.insert(
+        "payload.upload.filename".to_string(),
+        serde_json::json!(filename.clone()),
+    );
+    attrs.insert(
+        "payload.upload.content_type".to_string(),
+        serde_json::json!(content_type.clone()),
+    );
+    attrs.insert("payload.upload.size".to_string(), serde_json::json!(size));
+    capture_structured_log(Level::Info, "artifact.recorded", attrs);
 
     (
         StatusCode::CREATED,

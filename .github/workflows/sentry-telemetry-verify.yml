@@ -1,0 +1,108 @@
+name: sentry-telemetry-verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      emit_sentry:
+        description: "Send envelope event to Sentry"
+        required: true
+        default: true
+        type: boolean
+      emit_otlp:
+        description: "Send OTLP log + trace payloads when OTLP env vars are configured"
+        required: true
+        default: false
+        type: boolean
+      require_envelope_delivery:
+        description: "Fail run if envelope event is not delivered"
+        required: true
+        default: false
+        type: boolean
+      require_otlp_delivery:
+        description: "Fail run if OTLP log + trace are not delivered"
+        required: true
+        default: false
+        type: boolean
+  repository_dispatch:
+    types: [sentry-telemetry-verify]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Emit verification telemetry
+        env:
+          EMIT_SENTRY: ${{ github.event_name == 'workflow_dispatch' && inputs.emit_sentry || 'true' }}
+          EMIT_OTLP: ${{ github.event_name == 'workflow_dispatch' && inputs.emit_otlp || vars.OPENFANG_SENTRY_WORKFLOW_OTLP || 'false' }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_OTLP_LOGS_ENDPOINT: ${{ secrets.SENTRY_OTLP_LOGS_ENDPOINT || vars.SENTRY_OTLP_LOGS_ENDPOINT || '' }}
+          SENTRY_OTLP_TRACES_ENDPOINT: ${{ secrets.SENTRY_OTLP_TRACES_ENDPOINT || vars.SENTRY_OTLP_TRACES_ENDPOINT || '' }}
+          SENTRY_OTLP_AUTH_HEADER: ${{ secrets.SENTRY_OTLP_AUTH_HEADER || vars.SENTRY_OTLP_AUTH_HEADER || '' }}
+        run: |
+          mkdir -p artifacts
+          python3 scripts/harness/workflow_sentry_emit.py \
+            --workflow "sentry-telemetry-verify" \
+            --job "verify" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --event "${{ github.event_name }}" \
+            --repo "${{ github.repository }}" \
+            --head-sha "${{ github.sha }}" \
+            --status "failure" \
+            --emit "${EMIT_SENTRY}" \
+            --emit-on-failure-only "true" \
+            --sentry-dsn-env "SENTRY_DSN" \
+            --emit-otlp "${EMIT_OTLP}" \
+            --otlp-logs-endpoint-env "SENTRY_OTLP_LOGS_ENDPOINT" \
+            --otlp-traces-endpoint-env "SENTRY_OTLP_TRACES_ENDPOINT" \
+            --otlp-auth-header-env "SENTRY_OTLP_AUTH_HEADER" \
+            --out artifacts/sentry-workflow-emit.json
+
+      - name: Assert artifact contract
+        run: |
+          test -f artifacts/sentry-workflow-emit.json
+          jq -e '.reason_code' artifacts/sentry-workflow-emit.json >/dev/null
+          jq -e '.sent' artifacts/sentry-workflow-emit.json >/dev/null
+          jq -e '.otlp.enabled' artifacts/sentry-workflow-emit.json >/dev/null
+          jq -e '.otlp.logs_sent' artifacts/sentry-workflow-emit.json >/dev/null
+          jq -e '.otlp.traces_sent' artifacts/sentry-workflow-emit.json >/dev/null
+
+      - name: Assert envelope delivery when required
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.require_envelope_delivery }}
+        run: |
+          sent="$(jq -r '.sent' artifacts/sentry-workflow-emit.json)"
+          if [ "$sent" != "true" ]; then
+            echo "Envelope delivery required but not confirmed."
+            cat artifacts/sentry-workflow-emit.json
+            exit 1
+          fi
+
+      - name: Assert OTLP delivery when required
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.require_otlp_delivery }}
+        run: |
+          logs_sent="$(jq -r '.otlp.logs_sent' artifacts/sentry-workflow-emit.json)"
+          traces_sent="$(jq -r '.otlp.traces_sent' artifacts/sentry-workflow-emit.json)"
+          if [ "$logs_sent" != "true" ] || [ "$traces_sent" != "true" ]; then
+            echo "OTLP delivery required but not confirmed."
+            cat artifacts/sentry-workflow-emit.json
+            exit 1
+          fi
+
+      - name: Upload telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentry-telemetry-verify
+          path: artifacts/sentry-workflow-emit.json
+          if-no-files-found: error

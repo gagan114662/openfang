@@ -1,0 +1,23 @@
+{
+  "findings": [
+    {
+      "actionable": true,
+      "confidence": 0.9,
+      "id": "paperclip-PC-123",
+      "line": 3808,
+      "path": "crates/openfang-kernel/src/kernel.rs",
+      "severity": "high",
+      "source": {
+        "event_type": "issue.created",
+        "permalink": "https://paperclip.example/issues/pc-123",
+        "provider": "paperclip",
+        "short_id": "PC-123",
+        "status": "blocked"
+      },
+      "summary": "Agent heartbeat stalled"
+    }
+  ],
+  "generated_at": "2026-03-16T19:24:18.906614+00:00",
+  "provider": "paperclip",
+  "status": "success"
+}

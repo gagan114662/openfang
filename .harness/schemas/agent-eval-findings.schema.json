@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openfang.dev/schemas/agent-eval-findings.schema.json",
+  "title": "AgentEvalFindings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "head_sha",
+    "provider",
+    "status",
+    "findings"
+  ],
+  "properties": {
+    "head_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "provider": {
+      "type": "string",
+      "const": "eval"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "failure", "pending", "missing", "timeout", "stale", "error"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_failed", "actionable"],
+      "properties": {
+        "total_failed": {"type": "integer", "minimum": 0},
+        "actionable": {"type": "integer", "minimum": 0}
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "confidence",
+          "path",
+          "line",
+          "summary",
+          "actionable"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "path": {"type": "string"},
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "summary": {"type": "string"},
+          "actionable": {"type": "boolean"},
+          "scenario_id": {"type": "string"},
+          "failure_class": {"type": "string"}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

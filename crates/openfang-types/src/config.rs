@@ -1098,6 +1098,26 @@ pub struct SentryConfig {
     /// If None, Sentry is disabled.
     pub dsn: Option<String>,
 
+    /// Sentry API auth token (project:read, event:read). Prefer auth_token_env if set.
+    pub auth_token: Option<String>,
+
+    /// Environment variable holding the Sentry API auth token.
+    pub auth_token_env: Option<String>,
+
+    /// Default Sentry organization slug (optional).
+    pub org_slug: Option<String>,
+
+    /// Default Sentry project slug (optional).
+    pub project_slug: Option<String>,
+
+    /// Base URL for Sentry API (self-hosted support).
+    #[serde(default = "default_sentry_api_base_url")]
+    pub api_base_url: String,
+
+    /// Timeout for Sentry API requests in seconds.
+    #[serde(default = "default_sentry_api_timeout_secs")]
+    pub api_timeout_secs: u64,
+
     /// Environment name (production, staging, development).
     #[serde(default = "default_sentry_environment")]
     pub environment: String,
@@ -1120,6 +1140,41 @@ pub struct SentryConfig {
     #[serde(default = "default_true")]
     pub error_tracking: bool,
 
+    /// Attach a native stacktrace to message events captured via the Sentry SDK.
+    ///
+    /// For OpenFang's canonical wide events this is usually unnecessary and can
+    /// trigger Sentry processing warnings unless matching debug files are uploaded.
+    #[serde(default)]
+    pub attach_stacktrace: bool,
+
+    /// Enable structured Sentry log capture for wide events.
+    #[serde(default = "default_true")]
+    pub enable_logs: bool,
+
+    /// Flush the Sentry transport after each structured log for near-real-time UI updates.
+    #[serde(default)]
+    pub realtime_log_flush: bool,
+
+    /// Maximum time to block while flushing structured log delivery to Sentry.
+    #[serde(default = "default_sentry_log_flush_timeout_ms")]
+    pub realtime_log_flush_timeout_ms: u64,
+
+    /// Maximum size for any single structured log attribute before truncation.
+    #[serde(default = "default_sentry_wide_event_attribute_max_bytes")]
+    pub wide_event_attribute_max_bytes: usize,
+
+    /// Maximum total payload size for a structured log event before dropping fields.
+    #[serde(default = "default_sentry_wide_event_payload_max_bytes")]
+    pub wide_event_payload_max_bytes: usize,
+
+    /// Whether Claude session/task payloads should be forwarded to Sentry.
+    #[serde(default = "default_true")]
+    pub claude_capture_payloads: bool,
+
+    /// Whether MCP request/response payloads should be forwarded to Sentry.
+    #[serde(default = "default_true")]
+    pub mcp_capture_payloads: bool,
+
     /// Custom tags to add to all Sentry events.
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
@@ -1133,20 +1188,82 @@ fn default_true() -> bool {
     true
 }
 
+fn default_sentry_api_base_url() -> String {
+    "https://sentry.io".to_string()
+}
+
+fn default_sentry_api_timeout_secs() -> u64 {
+    30
+}
+
 fn default_sentry_sample_rate() -> f32 {
     1.0 // 100% sampling in dev
+}
+
+fn default_sentry_wide_event_attribute_max_bytes() -> usize {
+    16 * 1024
+}
+
+fn default_sentry_wide_event_payload_max_bytes() -> usize {
+    512 * 1024
+}
+
+fn default_sentry_log_flush_timeout_ms() -> u64 {
+    1500
 }
 
 impl Default for SentryConfig {
     fn default() -> Self {
         Self {
             dsn: None,
+            auth_token: None,
+            auth_token_env: None,
+            org_slug: None,
+            project_slug: None,
+            api_base_url: default_sentry_api_base_url(),
+            api_timeout_secs: default_sentry_api_timeout_secs(),
             environment: default_sentry_environment(),
             traces_sample_rate: default_sentry_sample_rate(),
             include_prompts: false,
             performance_monitoring: true,
             error_tracking: true,
+            attach_stacktrace: false,
+            enable_logs: true,
+            realtime_log_flush: false,
+            realtime_log_flush_timeout_ms: default_sentry_log_flush_timeout_ms(),
+            wide_event_attribute_max_bytes: default_sentry_wide_event_attribute_max_bytes(),
+            wide_event_payload_max_bytes: default_sentry_wide_event_payload_max_bytes(),
+            claude_capture_payloads: true,
+            mcp_capture_payloads: true,
             tags: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// MiroFish swarm-intelligence simulation engine configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MirofishConfig {
+    /// Whether the MiroFish integration is enabled.
+    pub enabled: bool,
+    /// Base URL of the MiroFish Flask backend.
+    pub base_url: String,
+    /// Environment variable name holding the MiroFish API key.
+    pub api_key_env: String,
+    /// Absolute local directory roots allowed for scan-and-simulate workflows.
+    pub allowed_local_roots: Vec<String>,
+    /// Request timeout in seconds (simulations can be very slow).
+    pub timeout_secs: u64,
+}
+
+impl Default for MirofishConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://localhost:5001".to_string(),
+            api_key_env: "MIROFISH_API_KEY".to_string(),
+            allowed_local_roots: Vec::new(),
+            timeout_secs: 300,
         }
     }
 }
@@ -1286,6 +1403,9 @@ pub struct KernelConfig {
     /// Sentry AI Monitoring configuration.
     #[serde(default)]
     pub sentry: SentryConfig,
+    /// MiroFish simulation engine configuration.
+    #[serde(default)]
+    pub mirofish: MirofishConfig,
 }
 
 /// Global spending budget configuration.
@@ -1435,6 +1555,7 @@ impl Default for KernelConfig {
             raindrop: RaindropConfig::default(),
             rlm: RlmConfig::default(),
             sentry: SentryConfig::default(),
+            mirofish: MirofishConfig::default(),
         }
     }
 }
@@ -1535,6 +1656,7 @@ impl std::fmt::Debug for KernelConfig {
                     self.rlm.postgres_connections.len()
                 ),
             )
+            .field("mirofish", &format!("enabled={}", self.mirofish.enabled))
             .finish()
     }
 }
@@ -1561,9 +1683,9 @@ pub struct DefaultModelConfig {
 impl Default for DefaultModelConfig {
     fn default() -> Self {
         Self {
-            provider: "anthropic".to_string(),
-            model: "claude-sonnet-4-20250514".to_string(),
-            api_key_env: "ANTHROPIC_API_KEY".to_string(),
+            provider: "codex-cli".to_string(),
+            model: "gpt-5".to_string(),
+            api_key_env: String::new(),
             base_url: None,
         }
     }
@@ -3505,6 +3627,9 @@ mod tests {
         assert_eq!(config.log_level, "info");
         assert_eq!(config.api_listen, "127.0.0.1:50051");
         assert!(!config.network_enabled);
+        assert_eq!(config.default_model.provider, "codex-cli");
+        assert_eq!(config.default_model.model, "gpt-5");
+        assert_eq!(config.default_model.api_key_env, "");
         assert!(!config.rlm.enabled);
         assert_eq!(config.rlm.bun_path, "bun");
     }
@@ -3516,6 +3641,71 @@ mod tests {
                 .unwrap();
         assert!(!cfg.rlm.enabled);
         assert_eq!(cfg.rlm.max_parallel_branches, 4);
+    }
+
+    #[test]
+    fn test_sentry_config_defaults() {
+        let sentry = SentryConfig::default();
+        assert!(!sentry.attach_stacktrace);
+        assert!(sentry.enable_logs);
+        assert!(!sentry.realtime_log_flush);
+        assert_eq!(sentry.api_base_url, "https://sentry.io");
+        assert_eq!(sentry.api_timeout_secs, 30);
+        assert_eq!(sentry.realtime_log_flush_timeout_ms, 1500);
+        assert_eq!(sentry.wide_event_attribute_max_bytes, 16 * 1024);
+        assert_eq!(sentry.wide_event_payload_max_bytes, 512 * 1024);
+        assert!(sentry.claude_capture_payloads);
+        assert!(sentry.mcp_capture_payloads);
+    }
+
+    #[test]
+    fn test_sentry_config_serde_new_fields() {
+        let cfg: KernelConfig = toml::from_str(
+            r#"
+[default_model]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[sentry]
+auth_token = "sentry-token"
+auth_token_env = "SENTRY_AUTH_TOKEN"
+org_slug = "foolish"
+project_slug = "openfang-monitoring"
+api_base_url = "https://sentry.example"
+api_timeout_secs = 45
+attach_stacktrace = true
+enable_logs = false
+realtime_log_flush = true
+realtime_log_flush_timeout_ms = 2500
+wide_event_attribute_max_bytes = 2048
+wide_event_payload_max_bytes = 65536
+claude_capture_payloads = false
+mcp_capture_payloads = false
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.sentry.auth_token.as_deref(), Some("sentry-token"));
+        assert_eq!(
+            cfg.sentry.auth_token_env.as_deref(),
+            Some("SENTRY_AUTH_TOKEN")
+        );
+        assert_eq!(cfg.sentry.org_slug.as_deref(), Some("foolish"));
+        assert_eq!(
+            cfg.sentry.project_slug.as_deref(),
+            Some("openfang-monitoring")
+        );
+        assert_eq!(cfg.sentry.api_base_url, "https://sentry.example");
+        assert_eq!(cfg.sentry.api_timeout_secs, 45);
+        assert!(cfg.sentry.attach_stacktrace);
+        assert!(!cfg.sentry.enable_logs);
+        assert!(cfg.sentry.realtime_log_flush);
+        assert_eq!(cfg.sentry.realtime_log_flush_timeout_ms, 2500);
+        assert_eq!(cfg.sentry.wide_event_attribute_max_bytes, 2048);
+        assert_eq!(cfg.sentry.wide_event_payload_max_bytes, 65536);
+        assert!(!cfg.sentry.claude_capture_payloads);
+        assert!(!cfg.sentry.mcp_capture_payloads);
     }
 
     #[test]

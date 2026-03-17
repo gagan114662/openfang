@@ -134,6 +134,18 @@ pub trait KernelHandle: Send + Sync {
         Ok(true) // Default: auto-approve
     }
 
+    /// Read-only Sentry API query (GET). Returns parsed JSON.
+    async fn sentry_get(
+        &self,
+        path: &str,
+        query: &std::collections::BTreeMap<String, String>,
+        org: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let _ = (path, query, org, project);
+        Err("Sentry API not available".to_string())
+    }
+
     /// List available Hands and their activation status.
     async fn hand_list(&self) -> Result<Vec<serde_json::Value>, String> {
         Err("Hands system not available".to_string())
@@ -169,6 +181,11 @@ pub trait KernelHandle: Send + Sync {
     /// Get the URL of a discovered external A2A agent by name.
     fn get_a2a_agent_url(&self, name: &str) -> Option<String> {
         let _ = name;
+        None
+    }
+
+    /// Get MiroFish configuration (for simulation tools).
+    fn get_mirofish_config(&self) -> Option<openfang_types::config::MirofishConfig> {
         None
     }
 

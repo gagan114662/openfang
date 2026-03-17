@@ -1,0 +1,17 @@
+{
+  "all_blocking_passed": true,
+  "blocking_threshold": 1.0,
+  "failed": 0,
+  "failure_classes": {},
+  "generated_at": "2026-03-01T17:02:53.963677+00:00",
+  "head_sha": "local-dev-sha",
+  "pass_rate": 1.0,
+  "passed": 34,
+  "profile": "blocking",
+  "sentry": {
+    "detail": "disabled",
+    "enabled": false,
+    "sent": false
+  },
+  "total": 34
+}

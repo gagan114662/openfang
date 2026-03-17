@@ -1,0 +1,114 @@
+name: tla-invariants
+
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tla-invariants
+  cancel-in-progress: false
+
+jobs:
+  tlc-check:
+    name: tlc-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download TLC
+        run: |
+          curl -fsSL \
+            -o /tmp/tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+
+      - name: Run Telegram poller spec
+        id: telegram_spec
+        run: |
+          cd specs/tla/telegram_poller
+          java -cp /tmp/tla2tools.jar tlc2.TLC -cleanup -deadlock -config owner.cfg owner.tla \
+            2>&1 | tee /tmp/tla-telegram.txt
+        continue-on-error: true
+
+      - name: Run operator session spec
+        id: operator_spec
+        run: |
+          cd specs/tla/operator_session
+          java -cp /tmp/tla2tools.jar tlc2.TLC -cleanup -deadlock -config session.cfg session.tla \
+            2>&1 | tee /tmp/tla-operator.txt
+        continue-on-error: true
+
+      - name: Build TLA report
+        id: report
+        run: |
+          TELEGRAM_OK=${{ steps.telegram_spec.outcome == 'success' }}
+          OPERATOR_OK=${{ steps.operator_spec.outcome == 'success' }}
+          ALL_OK=true
+          [[ "$TELEGRAM_OK" != "true" || "$OPERATOR_OK" != "true" ]] && ALL_OK=false
+
+          TELEGRAM_LOG=$(tail -20 /tmp/tla-telegram.txt | sed 's/"/\\"/g' | tr '\n' '|')
+          OPERATOR_LOG=$(tail -20 /tmp/tla-operator.txt | sed 's/"/\\"/g' | tr '\n' '|')
+
+          cat > /tmp/tla-invariants-report.json <<ENDJSON
+          {
+            "date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "all_passed": $ALL_OK,
+            "telegram_poller_passed": $TELEGRAM_OK,
+            "operator_session_passed": $OPERATOR_OK,
+            "telegram_poller_output": "$TELEGRAM_LOG",
+            "operator_session_output": "$OPERATOR_LOG"
+          }
+          ENDJSON
+
+          echo "all_ok=$ALL_OK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload TLA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tla-invariants-report
+          path: |
+            /tmp/tla-invariants-report.json
+            /tmp/tla-telegram.txt
+            /tmp/tla-operator.txt
+
+      - name: Emit Sentry telemetry
+        if: always()
+        env:
+          OPENFANG_SENTRY_WORKFLOW_EVENTS: ${{ vars.OPENFANG_SENTRY_WORKFLOW_EVENTS || 'true' }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          python3 scripts/harness/workflow_sentry_emit.py \
+            --workflow "tla-invariants" \
+            --job "tlc-check" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --event "${{ github.event_name }}" \
+            --repo "${{ github.repository }}" \
+            --head-sha "${{ github.sha }}" \
+            --status "${{ steps.report.outputs.all_ok == 'true' && 'success' || 'failure' }}" \
+            --emit "${OPENFANG_SENTRY_WORKFLOW_EVENTS}" \
+            --emit-on-failure-only "false" \
+            --sentry-dsn-env "SENTRY_DSN" \
+            --out /tmp/sentry-workflow-emit.json
+
+      - name: Upload Sentry telemetry artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tla-invariants-sentry-telemetry
+          path: /tmp/sentry-workflow-emit.json
+          if-no-files-found: warn
+
+      - name: Gate
+        if: steps.report.outputs.all_ok != 'true'
+        run: exit 1

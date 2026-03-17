@@ -1,0 +1,88 @@
+{
+  "generated_at": "2026-03-15T23:05:45.027836+00:00",
+  "primary_host": "gpu",
+  "telegram_owner": "gpu",
+  "primary_sentry_browser_host": "gpu",
+  "fallback_sentry_browser_host": "mac",
+  "ops_agent": null,
+  "ops_agent_budget": null,
+  "local_daemon": {
+    "listen_addr": "127.0.0.1:50051",
+    "pid": 54339,
+    "state": "unknown"
+  },
+  "remote_daemon": {
+    "host": "gpu",
+    "pid": null,
+    "service": "openfang.service",
+    "state": "unknown"
+  },
+  "browser_profiles": {
+    "fallback": {
+      "host": "mac",
+      "path": "/Users/gaganarora/.openfang/browser/profiles/sentry-fallback",
+      "present": true
+    },
+    "primary": {
+      "host": "gpu",
+      "path": "/Users/gaganarora/.openfang/browser/profiles/sentry-primary",
+      "present": false
+    }
+  },
+  "last_guard_heartbeat": {
+    "failure_reason": "ssh: connect to host 192.168.40.234 port 22: Host is down",
+    "kind": "ops.guard.failed",
+    "outcome": "fail",
+    "payload": {
+      "result": {
+        "rc": 255,
+        "service": "openfang.service",
+        "stderr": "ssh: connect to host 192.168.40.234 port 22: Host is down",
+        "stdout": ""
+      },
+      "type": "restart_remote_openfang"
+    },
+    "remediation_action": "restart_remote_openfang",
+    "remediation_result": "failed",
+    "request_id": "aaa40283-155c-4b8f-ac99-b9e4e0087ef3",
+    "timestamp": "2026-03-15T23:05:45.015340+00:00",
+    "trace_id": "debeafd52732659053fa48287af099b7",
+    "transaction": "ops.guard.cycle"
+  },
+  "last_guard_trace": {
+    "outcome": "fail",
+    "request_id": "aaa40283-155c-4b8f-ac99-b9e4e0087ef3",
+    "timestamp": "2026-03-15T23:05:45.027629+00:00",
+    "trace_id": "debeafd52732659053fa48287af099b7",
+    "transaction": "ops.guard.cycle"
+  },
+  "last_guard_outcome": "fail",
+  "last_triage_run": null,
+  "last_triage_status": null,
+  "last_autofix_run": null,
+  "last_autofix_status": null,
+  "last_deploy": null,
+  "last_auth_escalation": null,
+  "workloads": [],
+  "telegram": {
+    "admin_chat_id_present": false,
+    "last_send_failure": null,
+    "last_send_success": "2026-03-10T18:14:07.170138+00:00",
+    "outbox_depth": 0,
+    "owner_host": "gpu",
+    "rate_limited_until": null
+  },
+  "blockers": [
+    "local daemon process not found",
+    "remote openfang.service is not active (state=unknown)"
+  ],
+  "workload_registry": {
+    "path": "/Users/gaganarora/Desktop/my projects/open_fang/config/unattended_workloads.toml",
+    "present": true,
+    "workload_count": 5
+  },
+  "safety_policy": {
+    "path": "/Users/gaganarora/Desktop/my projects/open_fang/docs/ops/autofix-safety-policy.md",
+    "present": true
+  }
+}

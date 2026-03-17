@@ -1,0 +1,11 @@
+{
+  "errors": [],
+  "findings": [],
+  "head_sha": "local-nightly-sha",
+  "provider": "eval",
+  "status": "success",
+  "summary": {
+    "actionable": 0,
+    "total_failed": 0
+  }
+}

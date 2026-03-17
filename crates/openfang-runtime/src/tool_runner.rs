@@ -6,18 +6,23 @@
 use crate::kernel_handle::KernelHandle;
 use crate::llm_driver::LlmDriver;
 use crate::mcp;
+use crate::sentry_logs::{capture_structured_log, flatten_with_prefix};
 use crate::web_search::{parse_ddg_results, WebToolsContext};
 use openfang_skills::registry::SkillRegistry;
 use openfang_types::agent::ModelRoutingConfig;
 use openfang_types::taint::{TaintLabel, TaintSink, TaintedValue};
 use openfang_types::tool::{ToolDefinition, ToolResult};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Maximum inter-agent call depth to prevent infinite recursion (A->B->C->...).
 const MAX_AGENT_CALL_DEPTH: u32 = 5;
+const TOOL_RESULT_PREVIEW_MAX_CHARS: usize = 1024;
+const MIROFISH_SOURCE_MAX_FILES_DEFAULT: usize = 120;
+const MIROFISH_SOURCE_MAX_FILE_BYTES_DEFAULT: usize = 24 * 1024;
+const MIROFISH_SOURCE_MAX_TOTAL_BYTES_DEFAULT: usize = 1_500_000;
 
 /// Check if a shell command should be blocked by taint tracking.
 ///
@@ -91,6 +96,110 @@ pub fn current_agent_depth() -> u32 {
     AGENT_CALL_DEPTH.try_with(|d| d.get()).unwrap_or(0)
 }
 
+fn char_preview(input: &str, max_chars: usize) -> String {
+    let mut chars = input.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...[truncated]")
+    } else {
+        preview
+    }
+}
+
+fn emit_tool_execution_wide_event(
+    tool_name: &str,
+    tool_use_id: &str,
+    input: &serde_json::Value,
+    output: &str,
+    is_error: bool,
+    duration_ms: u64,
+    caller_agent_id: Option<&str>,
+    active_model_name: Option<&str>,
+) {
+    let mut attrs = BTreeMap::new();
+    attrs.insert(
+        "event.kind".to_string(),
+        serde_json::json!(if is_error {
+            "runtime.tool.execute.failed"
+        } else {
+            "runtime.tool.execute.completed"
+        }),
+    );
+    attrs.insert(
+        "event.category".to_string(),
+        serde_json::json!("agent_tool"),
+    );
+    attrs.insert("tool.name".to_string(), serde_json::json!(tool_name));
+    attrs.insert("tool.use_id".to_string(), serde_json::json!(tool_use_id));
+    attrs.insert(
+        "tool.input_bytes".to_string(),
+        serde_json::json!(input.to_string().len() as u64),
+    );
+    attrs.insert(
+        "tool.output_bytes".to_string(),
+        serde_json::json!(output.len() as u64),
+    );
+    attrs.insert("duration_ms".to_string(), serde_json::json!(duration_ms));
+    attrs.insert(
+        "outcome".to_string(),
+        serde_json::json!(if is_error { "error" } else { "success" }),
+    );
+    if let Some(agent_id) = caller_agent_id {
+        attrs.insert("agent.id".to_string(), serde_json::json!(agent_id));
+    }
+    if let Some(model_name) = active_model_name {
+        attrs.insert("model.name".to_string(), serde_json::json!(model_name));
+    }
+    attrs.insert(
+        "payload.output.preview".to_string(),
+        serde_json::json!(char_preview(output, TOOL_RESULT_PREVIEW_MAX_CHARS)),
+    );
+    if is_error {
+        attrs.insert(
+            "error.message".to_string(),
+            serde_json::json!(char_preview(output, TOOL_RESULT_PREVIEW_MAX_CHARS)),
+        );
+    }
+    attrs.extend(flatten_with_prefix("payload.input", input));
+
+    capture_structured_log(
+        if is_error {
+            sentry::Level::Warning
+        } else {
+            sentry::Level::Info
+        },
+        format!("runtime.tool.execute.{tool_name}"),
+        attrs,
+    );
+}
+
+fn finalize_tool_result_with_observability(
+    tool_use_id: &str,
+    tool_name: &str,
+    input: &serde_json::Value,
+    content: String,
+    is_error: bool,
+    started_at: std::time::Instant,
+    caller_agent_id: Option<&str>,
+    active_model_name: Option<&str>,
+) -> ToolResult {
+    emit_tool_execution_wide_event(
+        tool_name,
+        tool_use_id,
+        input,
+        &content,
+        is_error,
+        started_at.elapsed().as_millis() as u64,
+        caller_agent_id,
+        active_model_name,
+    );
+    ToolResult {
+        tool_use_id: tool_use_id.to_string(),
+        content,
+        is_error,
+    }
+}
+
 /// Execute a tool by name with the given input, returning a ToolResult.
 ///
 /// The optional `kernel` handle enables inter-agent tools. If `None`,
@@ -122,17 +231,24 @@ pub async fn execute_tool(
     active_model_name: Option<&str>,
     model_routing: Option<&ModelRoutingConfig>,
 ) -> ToolResult {
+    let started_at = std::time::Instant::now();
+
     // Capability enforcement: reject tools not in the allowed list
     if let Some(allowed) = allowed_tools {
         if !allowed.iter().any(|t| t == tool_name) {
             warn!(tool_name, "Capability denied: tool not in allowed list");
-            return ToolResult {
-                tool_use_id: tool_use_id.to_string(),
-                content: format!(
+            return finalize_tool_result_with_observability(
+                tool_use_id,
+                tool_name,
+                input,
+                format!(
                     "Permission denied: agent does not have capability to use tool '{tool_name}'"
                 ),
-                is_error: true,
-            };
+                true,
+                started_at,
+                caller_agent_id,
+                active_model_name,
+            );
         }
     }
 
@@ -151,22 +267,32 @@ pub async fn execute_tool(
                 }
                 Ok(false) => {
                     warn!(tool_name, "Approval denied — blocking tool execution");
-                    return ToolResult {
-                        tool_use_id: tool_use_id.to_string(),
-                        content: format!(
+                    return finalize_tool_result_with_observability(
+                        tool_use_id,
+                        tool_name,
+                        input,
+                        format!(
                             "Execution denied: '{}' requires human approval and was denied or timed out. The operation was not performed.",
                             tool_name
                         ),
-                        is_error: true,
-                    };
+                        true,
+                        started_at,
+                        caller_agent_id,
+                        active_model_name,
+                    );
                 }
                 Err(e) => {
                     warn!(tool_name, error = %e, "Approval system error");
-                    return ToolResult {
-                        tool_use_id: tool_use_id.to_string(),
-                        content: format!("Approval system error: {e}"),
-                        is_error: true,
-                    };
+                    return finalize_tool_result_with_observability(
+                        tool_use_id,
+                        tool_name,
+                        input,
+                        format!("Approval system error: {e}"),
+                        true,
+                        started_at,
+                        caller_agent_id,
+                        active_model_name,
+                    );
                 }
             }
         }
@@ -185,11 +311,16 @@ pub async fn execute_tool(
             // Taint check: block URLs containing secrets/PII from being exfiltrated
             let url = input["url"].as_str().unwrap_or("");
             if let Some(violation) = check_taint_net_fetch(url) {
-                return ToolResult {
-                    tool_use_id: tool_use_id.to_string(),
-                    content: format!("Taint violation: {violation}"),
-                    is_error: true,
-                };
+                return finalize_tool_result_with_observability(
+                    tool_use_id,
+                    tool_name,
+                    input,
+                    format!("Taint violation: {violation}"),
+                    true,
+                    started_at,
+                    caller_agent_id,
+                    active_model_name,
+                );
             }
             if let Some(ctx) = web_ctx {
                 ctx.fetch.fetch(url).await
@@ -207,6 +338,8 @@ pub async fn execute_tool(
             }
         }
 
+        "sentry_query" => tool_sentry_query(input, kernel).await,
+
         // Shell tool — exec policy + taint check
         "shell_exec" => {
             let command = input["command"].as_str().unwrap_or("");
@@ -215,11 +348,16 @@ pub async fn execute_tool(
                 if let Err(reason) =
                     crate::subprocess_sandbox::validate_command_allowlist(command, policy)
                 {
-                    return ToolResult {
-                        tool_use_id: tool_use_id.to_string(),
-                        content: format!("Exec policy denied: {reason}"),
-                        is_error: true,
-                    };
+                    return finalize_tool_result_with_observability(
+                        tool_use_id,
+                        tool_name,
+                        input,
+                        format!("Exec policy denied: {reason}"),
+                        true,
+                        started_at,
+                        caller_agent_id,
+                        active_model_name,
+                    );
                 }
             }
             // Skip taint check for Full exec policy (e.g. hand agents that need curl for APIs)
@@ -227,11 +365,16 @@ pub async fn execute_tool(
                 .is_some_and(|p| p.mode == openfang_types::config::ExecSecurityMode::Full);
             if !is_full_exec {
                 if let Some(violation) = check_taint_shell_exec(command) {
-                    return ToolResult {
-                        tool_use_id: tool_use_id.to_string(),
-                        content: format!("Taint violation: {violation}"),
-                        is_error: true,
-                    };
+                    return finalize_tool_result_with_observability(
+                        tool_use_id,
+                        tool_name,
+                        input,
+                        format!("Taint violation: {violation}"),
+                        true,
+                        started_at,
+                        caller_agent_id,
+                        active_model_name,
+                    );
                 }
             }
             tool_shell_exec(
@@ -344,15 +487,28 @@ pub async fn execute_tool(
         "a2a_discover" => tool_a2a_discover(input).await,
         "a2a_send" => tool_a2a_send(input, kernel).await,
 
+        // MiroFish simulation tools
+        "mirofish_build_graph" => tool_mirofish_build_graph(input, kernel, workspace_root).await,
+        "mirofish_simulate" => tool_mirofish_simulate(input, kernel).await,
+        "mirofish_status" => tool_mirofish_status(input, kernel).await,
+        "mirofish_interview" => tool_mirofish_interview(input, kernel).await,
+        "mirofish_report" => tool_mirofish_report(input, kernel).await,
+        "mirofish_list_agents" => tool_mirofish_list_agents(input, kernel).await,
+
         // Browser automation tools
         "browser_navigate" => {
             let url = input["url"].as_str().unwrap_or("");
             if let Some(violation) = check_taint_net_fetch(url) {
-                return ToolResult {
-                    tool_use_id: tool_use_id.to_string(),
-                    content: format!("Taint violation: {violation}"),
-                    is_error: true,
-                };
+                return finalize_tool_result_with_observability(
+                    tool_use_id,
+                    tool_name,
+                    input,
+                    format!("Taint violation: {violation}"),
+                    true,
+                    started_at,
+                    caller_agent_id,
+                    active_model_name,
+                );
             }
             match browser_ctx {
                 Some(mgr) => {
@@ -463,16 +619,26 @@ pub async fn execute_tool(
     };
 
     match result {
-        Ok(content) => ToolResult {
-            tool_use_id: tool_use_id.to_string(),
+        Ok(content) => finalize_tool_result_with_observability(
+            tool_use_id,
+            tool_name,
+            input,
             content,
-            is_error: false,
-        },
-        Err(err) => ToolResult {
-            tool_use_id: tool_use_id.to_string(),
-            content: format!("Error: {err}"),
-            is_error: true,
-        },
+            false,
+            started_at,
+            caller_agent_id,
+            active_model_name,
+        ),
+        Err(err) => finalize_tool_result_with_observability(
+            tool_use_id,
+            tool_name,
+            input,
+            format!("Error: {err}"),
+            true,
+            started_at,
+            caller_agent_id,
+            active_model_name,
+        ),
     }
 }
 
@@ -550,6 +716,25 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     "max_results": { "type": "integer", "description": "Maximum number of results to return (default: 5, max: 20)" }
                 },
                 "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "sentry_query".to_string(),
+            description: "Read-only Sentry API query (requires approval). Example path: organizations/{org}/events/. Supports query params via 'query' or helper fields (environment, stats_period, start, end, limit).".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Sentry API path under /api/0/ (e.g., organizations/{org}/events/)" },
+                    "query": { "type": "object", "description": "Query parameters as key/value map" },
+                    "org": { "type": "string", "description": "Org slug override for {org} placeholder" },
+                    "project": { "type": "string", "description": "Project slug override for {project} placeholder" },
+                    "environment": { "type": "string", "description": "Environment filter (defaults to config if omitted)" },
+                    "stats_period": { "type": "string", "description": "Relative time window, e.g. '24h', '7d'" },
+                    "start": { "type": "string", "description": "Start datetime (ISO8601)" },
+                    "end": { "type": "string", "description": "End datetime (ISO8601)" },
+                    "limit": { "type": "integer", "description": "Result limit" }
+                },
+                "required": ["path"]
             }),
         },
         // --- Shell tool ---
@@ -1168,6 +1353,105 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 }
             }),
         },
+        // --- MiroFish simulation tools ---
+        ToolDefinition {
+            name: "mirofish_build_graph".to_string(),
+            description: "Build a MiroFish knowledge graph from either inline seed documents or local source folders/files. Returns a graph_id for use in simulations.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project_name": { "type": "string", "description": "Name for the simulation project" },
+                    "simulation_requirement": { "type": "string", "description": "Optional prediction question or simulation requirement. Defaults to project_name if omitted." },
+                    "documents": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Seed documents (news articles, reports, etc.) to build the knowledge graph from"
+                    },
+                    "source_path": {
+                        "type": "string",
+                        "description": "Optional single local folder/file path to ingest as simulation corpus"
+                    },
+                    "source_paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional local folder/file paths to ingest recursively (code + docs)"
+                    },
+                    "max_files": {
+                        "type": "integer",
+                        "description": "Optional cap on number of source files ingested (default: 120)"
+                    },
+                    "max_file_bytes": {
+                        "type": "integer",
+                        "description": "Optional per-file byte cap for source ingestion (default: 24576)"
+                    },
+                    "max_total_bytes": {
+                        "type": "integer",
+                        "description": "Optional total byte cap across all ingested source files (default: 1500000)"
+                    }
+                },
+                "required": ["project_name"]
+            }),
+        },
+        ToolDefinition {
+            name: "mirofish_simulate".to_string(),
+            description: "Create and run a MiroFish swarm-intelligence simulation on a knowledge graph. Returns a simulation_id for polling status.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "graph_id": { "type": "string", "description": "Knowledge graph ID from mirofish_build_graph" },
+                    "topic": { "type": "string", "description": "Topic or question for the simulation to explore" },
+                    "rounds": { "type": "integer", "description": "Number of simulation rounds (default: decided by MiroFish)" }
+                },
+                "required": ["graph_id", "topic"]
+            }),
+        },
+        ToolDefinition {
+            name: "mirofish_status".to_string(),
+            description: "Check the status of a running MiroFish simulation. Use this to poll until status is 'completed'.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "simulation_id": { "type": "string", "description": "Simulation ID from mirofish_simulate" }
+                },
+                "required": ["simulation_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "mirofish_interview".to_string(),
+            description: "Interview a simulated agent inside a MiroFish simulation. Ask questions to understand the agent's perspective and predictions.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "simulation_id": { "type": "string", "description": "Simulation ID" },
+                    "agent_name": { "type": "string", "description": "Name of the simulated agent to interview (from mirofish_list_agents)" },
+                    "question": { "type": "string", "description": "Question to ask the simulated agent" }
+                },
+                "required": ["simulation_id", "agent_name", "question"]
+            }),
+        },
+        ToolDefinition {
+            name: "mirofish_report".to_string(),
+            description: "Generate a prediction report from a completed MiroFish simulation. Synthesizes agent behaviors and outcomes into actionable insights.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "simulation_id": { "type": "string", "description": "Simulation ID" },
+                    "topic": { "type": "string", "description": "Optional focus topic for the report" }
+                },
+                "required": ["simulation_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "mirofish_list_agents".to_string(),
+            description: "List all simulated agents in a MiroFish simulation, including their names and types.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "simulation_id": { "type": "string", "description": "Simulation ID" }
+                },
+                "required": ["simulation_id"]
+            }),
+        },
         // --- Canvas / A2UI tool ---
         ToolDefinition {
             name: "canvas_present".to_string(),
@@ -1377,6 +1661,79 @@ async fn tool_web_search_legacy(input: &serde_json::Value) -> Result<String, Str
     }
 
     Ok(output)
+}
+
+async fn tool_sentry_query(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let kernel = kernel.ok_or("Sentry query requires a kernel handle")?;
+    let path = input["path"].as_str().ok_or("Missing 'path' parameter")?;
+
+    let mut query_map = BTreeMap::new();
+    if let Some(map) = input["query"].as_object() {
+        for (key, value) in map {
+            if let Some(v) = json_query_value(value)? {
+                query_map.insert(key.clone(), v);
+            }
+        }
+    } else if !input["query"].is_null() {
+        return Err("'query' must be an object if provided".to_string());
+    }
+
+    apply_query_override(&mut query_map, input, "environment")?;
+    apply_query_override(&mut query_map, input, "stats_period")?;
+    apply_query_override(&mut query_map, input, "start")?;
+    apply_query_override(&mut query_map, input, "end")?;
+    apply_query_override(&mut query_map, input, "limit")?;
+
+    let org = input["org"].as_str();
+    let project = input["project"].as_str();
+
+    let response = kernel
+        .sentry_get(path, &query_map, org, project)
+        .await?;
+
+    serde_json::to_string_pretty(&response).map_err(|e| format!("Serialize error: {e}"))
+}
+
+fn apply_query_override(
+    query_map: &mut BTreeMap<String, String>,
+    input: &serde_json::Value,
+    key: &str,
+) -> Result<(), String> {
+    if let Some(value) = input.get(key) {
+        if let Some(v) = json_query_value(value)? {
+            query_map.insert(key.to_string(), v);
+        }
+    }
+    Ok(())
+}
+
+fn json_query_value(value: &serde_json::Value) -> Result<Option<String>, String> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(s) => Ok(Some(s.clone())),
+        serde_json::Value::Number(n) => Ok(Some(n.to_string())),
+        serde_json::Value::Bool(b) => Ok(Some(b.to_string())),
+        serde_json::Value::Array(items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                let part = match item {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Null => continue,
+                    _ => {
+                        return Err("Query array values must be string, number, or bool".to_string())
+                    }
+                };
+                parts.push(part);
+            }
+            Ok(Some(parts.join(",")))
+        }
+        _ => Err("Query values must be string, number, bool, or array".to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2249,6 +2606,380 @@ async fn tool_a2a_send(
 }
 
 // ---------------------------------------------------------------------------
+// MiroFish simulation tools
+// ---------------------------------------------------------------------------
+
+fn require_mirofish(
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<crate::mirofish::MirofishClient, String> {
+    let kh = require_kernel(kernel)?;
+    let cfg = kh
+        .get_mirofish_config()
+        .ok_or("MiroFish integration is not enabled. Set [mirofish] enabled=true in config.toml")?;
+    Ok(crate::mirofish::MirofishClient::from_config(&cfg))
+}
+
+#[derive(Debug, Default)]
+struct MirofishSourceIngestStats {
+    requested_paths: usize,
+    discovered_files: usize,
+    included_files: usize,
+    skipped_binary: usize,
+    skipped_non_source: usize,
+    skipped_too_large: usize,
+    skipped_budget: usize,
+    total_bytes: usize,
+}
+
+fn parse_mirofish_source_paths(input: &serde_json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(path) = input["source_path"].as_str() {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+    }
+    if let Some(paths) = input["source_paths"].as_array() {
+        for raw in paths.iter().filter_map(|v| v.as_str()) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn usize_input_or_default(
+    input: &serde_json::Value,
+    key: &str,
+    default_value: usize,
+    max_value: usize,
+) -> usize {
+    input[key]
+        .as_u64()
+        .map(|v| usize::try_from(v).unwrap_or(max_value))
+        .unwrap_or(default_value)
+        .min(max_value)
+}
+
+fn is_mirofish_source_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let lower_name = name.to_ascii_lowercase();
+    if lower_name == "dockerfile"
+        || lower_name == "makefile"
+        || lower_name == "readme"
+        || lower_name.starts_with("readme.")
+    {
+        return true;
+    }
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "rs" | "py"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "go"
+            | "java"
+            | "kt"
+            | "swift"
+            | "c"
+            | "cpp"
+            | "cc"
+            | "h"
+            | "hpp"
+            | "cs"
+            | "rb"
+            | "php"
+            | "scala"
+            | "sql"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "ps1"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "toml"
+            | "ini"
+            | "md"
+            | "txt"
+            | "xml"
+            | "html"
+            | "css"
+            | "scss"
+            | "proto"
+            | "graphql"
+    )
+}
+
+fn should_skip_mirofish_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        ".git"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | ".idea"
+            | ".vscode"
+    )
+}
+
+fn collect_source_files(paths: &[PathBuf], files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let mut stack = paths.to_vec();
+    while let Some(path) = stack.pop() {
+        let metadata = std::fs::metadata(&path)
+            .map_err(|e| format!("Failed to inspect '{}': {e}", path.display()))?;
+        if metadata.is_dir() {
+            if should_skip_mirofish_dir(&path) {
+                continue;
+            }
+            let entries = std::fs::read_dir(&path)
+                .map_err(|e| format!("Failed to read directory '{}': {e}", path.display()))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("Failed reading directory entry: {e}"))?;
+                stack.push(entry.path());
+            }
+        } else if metadata.is_file() {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(())
+}
+
+fn ingest_source_files(
+    paths: &[PathBuf],
+    max_files: usize,
+    max_file_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<(Vec<String>, MirofishSourceIngestStats), String> {
+    let mut stats = MirofishSourceIngestStats {
+        requested_paths: paths.len(),
+        ..Default::default()
+    };
+    let mut discovered = Vec::new();
+    collect_source_files(paths, &mut discovered)?;
+    stats.discovered_files = discovered.len();
+
+    let mut documents = Vec::new();
+    for file_path in discovered {
+        if stats.included_files >= max_files || stats.total_bytes >= max_total_bytes {
+            stats.skipped_budget += 1;
+            continue;
+        }
+        if !is_mirofish_source_file(&file_path) {
+            stats.skipped_non_source += 1;
+            continue;
+        }
+
+        let metadata = match std::fs::metadata(&file_path) {
+            Ok(meta) => meta,
+            Err(_) => {
+                stats.skipped_non_source += 1;
+                continue;
+            }
+        };
+
+        if metadata.len() as usize > max_file_bytes {
+            stats.skipped_too_large += 1;
+            continue;
+        }
+
+        let bytes = match std::fs::read(&file_path) {
+            Ok(data) => data,
+            Err(_) => {
+                stats.skipped_non_source += 1;
+                continue;
+            }
+        };
+
+        let Ok(content) = std::str::from_utf8(&bytes) else {
+            stats.skipped_binary += 1;
+            continue;
+        };
+
+        let doc = format!("SOURCE_FILE: {}\n\n{}", file_path.display(), content);
+        let doc_bytes = doc.len();
+        if stats.total_bytes + doc_bytes > max_total_bytes {
+            stats.skipped_budget += 1;
+            continue;
+        }
+        stats.total_bytes += doc_bytes;
+        stats.included_files += 1;
+        documents.push(doc);
+    }
+
+    Ok((documents, stats))
+}
+
+async fn tool_mirofish_build_graph(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+    workspace_root: Option<&Path>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let project_name = input["project_name"]
+        .as_str()
+        .ok_or("Missing 'project_name' parameter")?;
+    let simulation_requirement = input["simulation_requirement"].as_str();
+    let mut documents: Vec<String> = input["documents"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut ingest_report: Option<serde_json::Value> = None;
+    let source_paths = parse_mirofish_source_paths(input);
+    if !source_paths.is_empty() {
+        let max_files =
+            usize_input_or_default(input, "max_files", MIROFISH_SOURCE_MAX_FILES_DEFAULT, 2000);
+        let max_file_bytes = usize_input_or_default(
+            input,
+            "max_file_bytes",
+            MIROFISH_SOURCE_MAX_FILE_BYTES_DEFAULT,
+            2 * 1024 * 1024,
+        );
+        let max_total_bytes = usize_input_or_default(
+            input,
+            "max_total_bytes",
+            MIROFISH_SOURCE_MAX_TOTAL_BYTES_DEFAULT,
+            10 * 1024 * 1024,
+        );
+
+        let mut resolved_paths = Vec::new();
+        for raw in source_paths {
+            resolved_paths.push(resolve_file_path(&raw, workspace_root)?);
+        }
+        let (source_docs, stats) = tokio::task::spawn_blocking(move || {
+            ingest_source_files(&resolved_paths, max_files, max_file_bytes, max_total_bytes)
+        })
+        .await
+        .map_err(|e| format!("Failed to ingest source paths: {e}"))??;
+        documents.extend(source_docs);
+        ingest_report = Some(serde_json::json!({
+            "requested_paths": stats.requested_paths,
+            "discovered_files": stats.discovered_files,
+            "included_files": stats.included_files,
+            "skipped_binary": stats.skipped_binary,
+            "skipped_non_source": stats.skipped_non_source,
+            "skipped_too_large": stats.skipped_too_large,
+            "skipped_budget": stats.skipped_budget,
+            "total_bytes": stats.total_bytes,
+            "max_files": max_files,
+            "max_file_bytes": max_file_bytes,
+            "max_total_bytes": max_total_bytes,
+        }));
+    }
+
+    if documents.is_empty() {
+        return Err("Missing simulation corpus: provide 'documents' or 'source_paths'".to_string());
+    }
+
+    let result = client
+        .build_graph(project_name, simulation_requirement, &documents)
+        .await?;
+    let mut payload =
+        serde_json::to_value(&result).map_err(|e| format!("Serialization error: {e}"))?;
+    if let Some(report) = ingest_report {
+        payload["source_ingest"] = report;
+    }
+    payload["document_count"] = serde_json::json!(documents.len());
+    serde_json::to_string_pretty(&payload).map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn tool_mirofish_simulate(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let graph_id = input["graph_id"]
+        .as_str()
+        .ok_or("Missing 'graph_id' parameter")?;
+    let topic = input["topic"].as_str().ok_or("Missing 'topic' parameter")?;
+    let project_id = input["project_id"].as_str();
+    let rounds = input["rounds"].as_u64().map(|r| r as u32);
+
+    // Create → prepare → run (full lifecycle)
+    let sim = client
+        .create_simulation(graph_id, project_id, topic, rounds)
+        .await?;
+    serde_json::to_string_pretty(&sim).map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn tool_mirofish_status(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let sim_id = input["simulation_id"]
+        .as_str()
+        .ok_or("Missing 'simulation_id' parameter")?;
+    let info = client.get_status(sim_id).await?;
+    serde_json::to_string_pretty(&info).map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn tool_mirofish_interview(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let sim_id = input["simulation_id"]
+        .as_str()
+        .ok_or("Missing 'simulation_id' parameter")?;
+    let agent_name = input["agent_name"]
+        .as_str()
+        .ok_or("Missing 'agent_name' parameter")?;
+    let question = input["question"]
+        .as_str()
+        .ok_or("Missing 'question' parameter")?;
+    let result = client.interview(sim_id, agent_name, question).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn tool_mirofish_report(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let sim_id = input["simulation_id"]
+        .as_str()
+        .ok_or("Missing 'simulation_id' parameter")?;
+    let topic = input["topic"].as_str();
+    let result = client.generate_report(sim_id, topic).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn tool_mirofish_list_agents(
+    input: &serde_json::Value,
+    kernel: Option<&Arc<dyn KernelHandle>>,
+) -> Result<String, String> {
+    let client = require_mirofish(kernel)?;
+    let sim_id = input["simulation_id"]
+        .as_str()
+        .ok_or("Missing 'simulation_id' parameter")?;
+    let agents = client.get_entities(sim_id).await?;
+    serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // Image analysis tool
 // ---------------------------------------------------------------------------
 
@@ -2999,13 +3730,188 @@ async fn tool_canvas_present(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use crate::kernel_handle;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    struct MockKernel {
+        captured: Arc<Mutex<Option<(String, BTreeMap<String, String>, Option<String>, Option<String>)>>>,
+    }
+
+    #[async_trait]
+    impl KernelHandle for MockKernel {
+        async fn spawn_agent(
+            &self,
+            _manifest_toml: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<(String, String), String> {
+            unimplemented!()
+        }
+
+        async fn send_to_agent(&self, _agent_id: &str, _message: &str) -> Result<String, String> {
+            unimplemented!()
+        }
+
+        fn list_agents(&self) -> Vec<kernel_handle::AgentInfo> {
+            vec![]
+        }
+
+        fn kill_agent(&self, _agent_id: &str) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn memory_store(&self, _key: &str, _value: serde_json::Value) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn memory_recall(&self, _key: &str) -> Result<Option<serde_json::Value>, String> {
+            unimplemented!()
+        }
+
+        fn find_agents(&self, _query: &str) -> Vec<kernel_handle::AgentInfo> {
+            vec![]
+        }
+
+        async fn task_post(
+            &self,
+            _title: &str,
+            _description: &str,
+            _assigned_to: Option<&str>,
+            _created_by: Option<&str>,
+        ) -> Result<String, String> {
+            unimplemented!()
+        }
+
+        async fn task_claim(&self, _agent_id: &str) -> Result<Option<serde_json::Value>, String> {
+            unimplemented!()
+        }
+
+        async fn task_complete(&self, _task_id: &str, _result: &str) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        async fn task_list(&self, _status: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
+            unimplemented!()
+        }
+
+        async fn publish_event(
+            &self,
+            _event_type: &str,
+            _payload: serde_json::Value,
+        ) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        async fn knowledge_add_entity(
+            &self,
+            _entity: openfang_types::memory::Entity,
+        ) -> Result<String, String> {
+            unimplemented!()
+        }
+
+        async fn knowledge_add_relation(
+            &self,
+            _relation: openfang_types::memory::Relation,
+        ) -> Result<String, String> {
+            unimplemented!()
+        }
+
+        async fn knowledge_query(
+            &self,
+            _pattern: openfang_types::memory::GraphPattern,
+        ) -> Result<Vec<openfang_types::memory::GraphMatch>, String> {
+            unimplemented!()
+        }
+
+        async fn cron_create(
+            &self,
+            _agent_id: &str,
+            _job_json: serde_json::Value,
+        ) -> Result<String, String> {
+            unimplemented!()
+        }
+
+        async fn cron_list(&self, _agent_id: &str) -> Result<Vec<serde_json::Value>, String> {
+            unimplemented!()
+        }
+
+        async fn cron_cancel(&self, _job_id: &str) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn requires_approval(&self, _tool_name: &str) -> bool {
+            false
+        }
+
+        async fn request_approval(
+            &self,
+            _agent_id: &str,
+            _tool_name: &str,
+            _action_summary: &str,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+
+        async fn hand_list(&self) -> Result<Vec<serde_json::Value>, String> {
+            unimplemented!()
+        }
+
+        async fn hand_activate(
+            &self,
+            _hand_id: &str,
+            _config: std::collections::HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, String> {
+            unimplemented!()
+        }
+
+        async fn hand_status(&self, _hand_id: &str) -> Result<serde_json::Value, String> {
+            unimplemented!()
+        }
+
+        async fn hand_deactivate(&self, _instance_id: &str) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn list_a2a_agents(&self) -> Vec<(String, String)> {
+            vec![]
+        }
+
+        fn get_a2a_agent_url(&self, _name: &str) -> Option<String> {
+            None
+        }
+
+        fn get_mirofish_config(&self) -> Option<openfang_types::config::MirofishConfig> {
+            None
+        }
+
+        async fn sentry_get(
+            &self,
+            path: &str,
+            query: &BTreeMap<String, String>,
+            org: Option<&str>,
+            project: Option<&str>,
+        ) -> Result<serde_json::Value, String> {
+            let mut guard = self
+                .captured
+                .lock()
+                .map_err(|_| "capture lock poisoned".to_string())?;
+            *guard = Some((
+                path.to_string(),
+                query.clone(),
+                org.map(|v| v.to_string()),
+                project.map(|v| v.to_string()),
+            ));
+            Ok(serde_json::json!({"ok": true}))
+        }
+    }
 
     #[test]
     fn test_builtin_tool_definitions() {
         let tools = builtin_tool_definitions();
         assert!(
-            tools.len() >= 43,
-            "Expected at least 43 tools, got {}",
+            tools.len() >= 44,
+            "Expected at least 44 tools, got {}",
             tools.len()
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -3062,6 +3968,8 @@ mod tests {
         assert!(names.contains(&"rlm_state_inspect"));
         // Canvas tool
         assert!(names.contains(&"canvas_present"));
+        // Sentry tool
+        assert!(names.contains(&"sentry_query"));
     }
 
     #[test]
@@ -3092,6 +4000,56 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_sentry_query_merges_helpers() {
+        let captured = Arc::new(Mutex::new(None));
+        let kernel: Arc<dyn KernelHandle> = Arc::new(MockKernel {
+            captured: Arc::clone(&captured),
+        });
+
+        let input = serde_json::json!({
+            "path": "organizations/{org}/events/",
+            "org": "foolish",
+            "query": { "query": "is:unresolved" },
+            "stats_period": "24h",
+            "limit": 50
+        });
+
+        let result = execute_tool(
+            "test-id",
+            "sentry_query",
+            &input,
+            Some(&kernel),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None, // media_engine
+            None, // exec_policy
+            None, // tts_engine
+            None, // docker_config
+            None, // process_manager
+            None, // llm_driver
+            None, // active_model_name
+            None, // model_routing
+        )
+        .await;
+
+        assert!(!result.is_error);
+        let guard = captured.lock().unwrap();
+        let (path, query, org, project) = guard.clone().expect("missing capture");
+        assert_eq!(path, "organizations/{org}/events/");
+        assert_eq!(org.as_deref(), Some("foolish"));
+        assert!(project.is_none());
+        assert_eq!(query.get("query").map(String::as_str), Some("is:unresolved"));
+        assert_eq!(query.get("stats_period").map(String::as_str), Some("24h"));
+        assert_eq!(query.get("limit").map(String::as_str), Some("50"));
     }
 
     #[tokio::test]

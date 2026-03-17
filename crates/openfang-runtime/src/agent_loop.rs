@@ -12,6 +12,7 @@ use crate::llm_driver::{CompletionRequest, LlmDriver, LlmError, StreamEvent};
 use crate::llm_errors;
 use crate::loop_guard::{LoopGuard, LoopGuardConfig, LoopGuardVerdict};
 use crate::mcp::McpConnection;
+use crate::sentry_logs::{capture_structured_log, flatten_with_prefix};
 use crate::tool_runner;
 use crate::web_search::WebToolsContext;
 use openfang_memory::session::Session;
@@ -24,6 +25,7 @@ use openfang_types::message::{
     ContentBlock, Message, MessageContent, Role, StopReason, TokenUsage,
 };
 use openfang_types::tool::{ToolCall, ToolDefinition};
+use sentry::Level;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -74,6 +76,54 @@ pub enum LoopPhase {
 /// Implementations should be non-blocking (fire-and-forget) to avoid slowing the loop.
 pub type PhaseCallback = Arc<dyn Fn(LoopPhase) + Send + Sync>;
 
+struct SentryTransactionGuard {
+    transaction: Option<sentry::Transaction>,
+    status: sentry::protocol::SpanStatus,
+}
+
+impl SentryTransactionGuard {
+    fn start(name: &str, op: &str) -> Self {
+        let transaction = sentry::start_transaction(sentry::TransactionContext::new(name, op));
+        sentry::configure_scope(|scope| {
+            scope.set_span(Some(transaction.clone().into()));
+        });
+        Self {
+            transaction: Some(transaction),
+            status: sentry::protocol::SpanStatus::UnknownError,
+        }
+    }
+
+    fn transaction(&self) -> Option<&sentry::Transaction> {
+        self.transaction.as_ref()
+    }
+
+    fn span(&self) -> Option<sentry::TransactionOrSpan> {
+        self.transaction
+            .as_ref()
+            .map(|transaction| transaction.clone().into())
+    }
+
+    fn set_status(&mut self, status: sentry::protocol::SpanStatus) {
+        self.status = status;
+    }
+
+    fn finish(&mut self) {
+        if let Some(transaction) = self.transaction.take() {
+            transaction.set_status(self.status);
+            sentry::configure_scope(|scope| {
+                scope.set_span(None);
+            });
+            transaction.finish();
+        }
+    }
+}
+
+impl Drop for SentryTransactionGuard {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
 /// Result of an agent loop execution.
 #[derive(Debug)]
 pub struct AgentLoopResult {
@@ -121,20 +171,16 @@ pub async fn run_agent_loop(
     info!(agent = %manifest.name, "Starting agent loop");
 
     // Start Sentry transaction for performance monitoring
-    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
-        "agent.loop",
-        "ai-inference",
-    ));
-    sentry::configure_scope(|scope| {
-        scope.set_span(Some(transaction.clone().into()));
-    });
+    let mut transaction_guard = SentryTransactionGuard::start("agent.loop", "ai-inference");
 
     // Set transaction metadata
-    transaction.set_data("agent_name", manifest.name.clone().into());
-    transaction.set_data("agent_id", session.agent_id.to_string().into());
-    transaction.set_data("model", manifest.model.model.clone().into());
-    transaction.set_data("provider", manifest.model.provider.clone().into());
-    transaction.set_data("user_message_len", user_message.len().into());
+    if let Some(transaction) = transaction_guard.transaction() {
+        transaction.set_data("agent_name", manifest.name.clone().into());
+        transaction.set_data("agent_id", session.agent_id.to_string().into());
+        transaction.set_data("model", manifest.model.model.clone().into());
+        transaction.set_data("provider", manifest.model.provider.clone().into());
+        transaction.set_data("user_message_len", user_message.len().into());
+    }
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -319,6 +365,7 @@ pub async fn run_agent_loop(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
+            sentry_parent_span: None,
         };
 
         // Notify phase: Thinking
@@ -328,7 +375,15 @@ pub async fn run_agent_loop(
 
         // Call LLM with retry, error classification, and circuit breaker
         let provider_name = manifest.model.provider.as_str();
-        let mut response = call_with_retry(&*driver, request, Some(provider_name), None).await?;
+        let sentry_parent = transaction_guard.span();
+        let mut response = call_with_retry(
+            &*driver,
+            request,
+            Some(provider_name),
+            None,
+            sentry_parent.as_ref(),
+        )
+        .await?;
 
         total_usage.input_tokens += response.usage.input_tokens;
         total_usage.output_tokens += response.usage.output_tokens;
@@ -517,6 +572,7 @@ pub async fn run_agent_loop(
                     let _ = hook_reg.fire(&ctx);
                 }
 
+                transaction_guard.set_status(sentry::protocol::SpanStatus::Ok);
                 return Ok(AgentLoopResult {
                     response: final_response,
                     total_usage,
@@ -752,6 +808,7 @@ pub async fn run_agent_loop(
                         };
                         let _ = hook_reg.fire(&ctx);
                     }
+                    transaction_guard.set_status(sentry::protocol::SpanStatus::Ok);
                     return Ok(AgentLoopResult {
                         response: text,
                         total_usage,
@@ -791,6 +848,7 @@ pub async fn run_agent_loop(
         let _ = hook_reg.fire(&ctx);
     }
 
+    transaction_guard.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
     Err(OpenFangError::MaxIterationsExceeded(max_iterations))
 }
 
@@ -803,25 +861,35 @@ async fn call_with_retry(
     request: CompletionRequest,
     provider: Option<&str>,
     cooldown: Option<&ProviderCooldown>,
+    parent_span: Option<&sentry::TransactionOrSpan>,
 ) -> OpenFangResult<crate::llm_driver::CompletionResponse> {
+    let request_preview = request
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == Role::User)
+        .map(|message| message.content.text_content())
+        .unwrap_or_default();
+
     // Start Sentry span for this LLM call
-    let span = sentry::configure_scope(|scope| {
-        scope.get_span().map(|parent| {
-            let child = parent.start_child("llm.completion", "LLM API call with retry logic");
+    let span = parent_span.map(|parent| {
+        let child = parent.start_child("llm.completion", "LLM API call with retry logic");
 
-            // Add metadata
-            if let Some(p) = provider {
-                child.set_data("provider", p.to_string().into());
-            }
-            child.set_data("model", request.model.clone().into());
-            child.set_data("max_tokens", request.max_tokens.into());
-            child.set_data("temperature", f64::from(request.temperature).into());
-            child.set_data("message_count", request.messages.len().into());
-            child.set_data("tool_count", request.tools.len().into());
+        if let Some(p) = provider {
+            child.set_data("provider", p.to_string().into());
+        }
+        child.set_data("model", request.model.clone().into());
+        child.set_data("max_tokens", request.max_tokens.into());
+        child.set_data("temperature", f64::from(request.temperature).into());
+        child.set_data("message_count", request.messages.len().into());
+        child.set_data("tool_count", request.tools.len().into());
 
-            child
-        })
+        let child: sentry::TransactionOrSpan = child.into();
+        std::sync::Arc::new(child)
     });
+
+    let mut request = request;
+    request.sentry_parent_span = span.clone();
 
     // Check circuit breaker before calling
     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
@@ -831,11 +899,11 @@ async fn call_with_retry(
                 retry_after_secs,
             } => {
                 // Circuit breaker blocked - report to Sentry
-                if let Some(sp) = span {
+                if let Some(sp) = span.as_ref() {
                     sp.set_data("circuit_breaker", "blocked".into());
                     sp.set_data("retry_after_secs", retry_after_secs.into());
                     sp.set_status(sentry::protocol::SpanStatus::FailedPrecondition);
-                    sp.finish();
+                    sp.as_ref().clone().finish();
                 }
                 sentry::add_breadcrumb(sentry::Breadcrumb {
                     message: Some(format!("Circuit breaker blocked: {reason}")),
@@ -878,7 +946,7 @@ async fn call_with_retry(
                 let duration = start.elapsed();
 
                 // SUCCESS - Record metrics to Sentry
-                if let Some(sp) = span {
+                if let Some(sp) = span.as_ref() {
                     sp.set_data("attempt", (attempt + 1).into());
                     sp.set_data("input_tokens", response.usage.input_tokens.into());
                     sp.set_data("output_tokens", response.usage.output_tokens.into());
@@ -889,13 +957,56 @@ async fn call_with_retry(
                     sp.set_data("duration_ms", (duration.as_millis() as u64).into());
                     sp.set_data("stop_reason", format!("{:?}", response.stop_reason).into());
                     sp.set_status(sentry::protocol::SpanStatus::Ok);
-                    sp.finish();
+                    sp.as_ref().clone().finish();
                 }
 
                 // Record success with circuit breaker
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_success(provider);
                 }
+
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert(
+                    "event.kind".to_string(),
+                    serde_json::json!("runtime.llm_call.completed"),
+                );
+                attrs.insert(
+                    "provider".to_string(),
+                    serde_json::json!(provider.unwrap_or_default()),
+                );
+                attrs.insert(
+                    "model".to_string(),
+                    serde_json::json!(request.model.clone()),
+                );
+                attrs.insert("outcome".to_string(), serde_json::json!("success"));
+                attrs.insert(
+                    "attempt".to_string(),
+                    serde_json::json!((attempt + 1) as u64),
+                );
+                attrs.insert(
+                    "duration_ms".to_string(),
+                    serde_json::json!(duration.as_millis() as u64),
+                );
+                attrs.insert(
+                    "usage.input_tokens".to_string(),
+                    serde_json::json!(response.usage.input_tokens),
+                );
+                attrs.insert(
+                    "usage.output_tokens".to_string(),
+                    serde_json::json!(response.usage.output_tokens),
+                );
+                attrs.extend(flatten_with_prefix(
+                    "payload",
+                    &serde_json::json!({
+                        "input": {
+                            "user_message": request_preview.clone(),
+                        },
+                        "output": {
+                            "response": response.text(),
+                        }
+                    }),
+                ));
+                capture_structured_log(Level::Info, "runtime.llm_call.completed", attrs);
                 return Ok(response);
             }
             Err(LlmError::RateLimited { retry_after_ms }) => {
@@ -912,12 +1023,12 @@ async fn call_with_retry(
 
                 if attempt == MAX_RETRIES {
                     // Final failure - report error to Sentry
-                    if let Some(sp) = span {
+                    if let Some(sp) = span.as_ref() {
                         sp.set_data("error_category", "rate_limit".into());
                         sp.set_data("attempt", (attempt + 1).into());
                         sp.set_data("retry_after_ms", retry_after_ms.into());
                         sp.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
-                        sp.finish();
+                        sp.as_ref().clone().finish();
                     }
                     sentry::capture_message(
                         &format!("Rate limited after {} retries", MAX_RETRIES),
@@ -927,6 +1038,41 @@ async fn call_with_retry(
                     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                         cooldown.record_failure(provider, false);
                     }
+                    let mut attrs = std::collections::BTreeMap::new();
+                    attrs.insert(
+                        "event.kind".to_string(),
+                        serde_json::json!("runtime.llm_call.failed"),
+                    );
+                    attrs.insert(
+                        "provider".to_string(),
+                        serde_json::json!(provider.unwrap_or_default()),
+                    );
+                    attrs.insert(
+                        "model".to_string(),
+                        serde_json::json!(request.model.clone()),
+                    );
+                    attrs.insert("outcome".to_string(), serde_json::json!("error"));
+                    attrs.insert(
+                        "failure_reason".to_string(),
+                        serde_json::json!("rate_limited"),
+                    );
+                    attrs.insert(
+                        "attempt".to_string(),
+                        serde_json::json!((attempt + 1) as u64),
+                    );
+                    attrs.insert(
+                        "retry_after_ms".to_string(),
+                        serde_json::json!(retry_after_ms),
+                    );
+                    attrs.extend(flatten_with_prefix(
+                        "payload",
+                        &serde_json::json!({
+                            "input": {
+                                "user_message": request_preview.clone(),
+                            }
+                        }),
+                    ));
+                    capture_structured_log(Level::Warning, "runtime.llm_call.failed", attrs);
                     return Err(OpenFangError::LlmDriver(format!(
                         "Rate limited after {} retries",
                         MAX_RETRIES
@@ -946,6 +1092,41 @@ async fn call_with_retry(
                     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                         cooldown.record_failure(provider, false);
                     }
+                    let mut attrs = std::collections::BTreeMap::new();
+                    attrs.insert(
+                        "event.kind".to_string(),
+                        serde_json::json!("runtime.llm_call.failed"),
+                    );
+                    attrs.insert(
+                        "provider".to_string(),
+                        serde_json::json!(provider.unwrap_or_default()),
+                    );
+                    attrs.insert(
+                        "model".to_string(),
+                        serde_json::json!(request.model.clone()),
+                    );
+                    attrs.insert("outcome".to_string(), serde_json::json!("error"));
+                    attrs.insert(
+                        "failure_reason".to_string(),
+                        serde_json::json!("overloaded"),
+                    );
+                    attrs.insert(
+                        "attempt".to_string(),
+                        serde_json::json!((attempt + 1) as u64),
+                    );
+                    attrs.insert(
+                        "retry_after_ms".to_string(),
+                        serde_json::json!(retry_after_ms),
+                    );
+                    attrs.extend(flatten_with_prefix(
+                        "payload",
+                        &serde_json::json!({
+                            "input": {
+                                "user_message": request_preview.clone(),
+                            }
+                        }),
+                    ));
+                    capture_structured_log(Level::Warning, "runtime.llm_call.failed", attrs);
                     return Err(OpenFangError::LlmDriver(format!(
                         "Model overloaded after {} retries",
                         MAX_RETRIES
@@ -982,7 +1163,7 @@ async fn call_with_retry(
                     ..Default::default()
                 });
 
-                if let Some(sp) = span {
+                if let Some(sp) = span.as_ref() {
                     sp.set_data(
                         "error_category",
                         format!("{:?}", classified.category).into(),
@@ -1005,7 +1186,7 @@ async fn call_with_retry(
                         }
                         _ => sentry::protocol::SpanStatus::InternalError,
                     });
-                    sp.finish();
+                    sp.as_ref().clone().finish();
                 }
 
                 // Capture error event with context
@@ -1031,6 +1212,45 @@ async fn call_with_retry(
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_failure(provider, classified.is_billing);
                 }
+
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert(
+                    "event.kind".to_string(),
+                    serde_json::json!("runtime.llm_call.failed"),
+                );
+                attrs.insert(
+                    "provider".to_string(),
+                    serde_json::json!(provider.unwrap_or_default()),
+                );
+                attrs.insert(
+                    "model".to_string(),
+                    serde_json::json!(request.model.clone()),
+                );
+                attrs.insert("outcome".to_string(), serde_json::json!("error"));
+                attrs.insert(
+                    "failure_reason".to_string(),
+                    serde_json::json!(classified.sanitized_message.clone()),
+                );
+                attrs.insert(
+                    "error.category".to_string(),
+                    serde_json::json!(format!("{:?}", classified.category)),
+                );
+                attrs.insert(
+                    "attempt".to_string(),
+                    serde_json::json!((attempt + 1) as u64),
+                );
+                attrs.extend(flatten_with_prefix(
+                    "payload",
+                    &serde_json::json!({
+                        "input": {
+                            "user_message": request_preview.clone(),
+                        },
+                        "error": {
+                            "raw": raw_error.clone(),
+                        }
+                    }),
+                ));
+                capture_structured_log(Level::Error, "runtime.llm_call.failed", attrs);
 
                 // Include raw error detail so dashboard users can debug
                 let user_msg = if classified.category == llm_errors::LlmErrorCategory::Format {
@@ -1187,6 +1407,16 @@ pub async fn run_agent_loop_streaming(
     process_manager: Option<&crate::process_manager::ProcessManager>,
 ) -> OpenFangResult<AgentLoopResult> {
     info!(agent = %manifest.name, "Starting streaming agent loop");
+
+    let mut transaction_guard = SentryTransactionGuard::start("agent.loop", "ai-inference");
+    if let Some(transaction) = transaction_guard.transaction() {
+        transaction.set_data("agent_name", manifest.name.clone().into());
+        transaction.set_data("agent_id", session.agent_id.to_string().into());
+        transaction.set_data("model", manifest.model.model.clone().into());
+        transaction.set_data("provider", manifest.model.provider.clone().into());
+        transaction.set_data("user_message_len", user_message.len().into());
+        transaction.set_data("streaming", true.into());
+    }
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -1383,6 +1613,7 @@ pub async fn run_agent_loop_streaming(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
+            sentry_parent_span: None,
         };
 
         // Notify phase: Streaming (streaming variant always streams)
@@ -1448,6 +1679,7 @@ pub async fn run_agent_loop_streaming(
                     memory
                         .save_session(session)
                         .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+                    transaction_guard.set_status(sentry::protocol::SpanStatus::Ok);
                     return Ok(AgentLoopResult {
                         response: String::new(),
                         total_usage,
@@ -1583,6 +1815,7 @@ pub async fn run_agent_loop_streaming(
                     let _ = hook_reg.fire(&ctx);
                 }
 
+                transaction_guard.set_status(sentry::protocol::SpanStatus::Ok);
                 return Ok(AgentLoopResult {
                     response: final_response,
                     total_usage,
@@ -1825,6 +2058,7 @@ pub async fn run_agent_loop_streaming(
                         };
                         let _ = hook_reg.fire(&ctx);
                     }
+                    transaction_guard.set_status(sentry::protocol::SpanStatus::Ok);
                     return Ok(AgentLoopResult {
                         response: text,
                         total_usage,
@@ -1862,6 +2096,7 @@ pub async fn run_agent_loop_streaming(
         let _ = hook_reg.fire(&ctx);
     }
 
+    transaction_guard.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
     Err(OpenFangError::MaxIterationsExceeded(max_iterations))
 }
 

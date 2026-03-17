@@ -6,9 +6,9 @@
 # api_listen = "127.0.0.1:50051"             # HTTP API bind address (use 0.0.0.0 for public)
 
 [default_model]
-provider = "anthropic"                    # "anthropic", "gemini", "openai", "groq", "ollama", etc.
-model = "claude-sonnet-4-20250514"        # Model identifier
-api_key_env = "ANTHROPIC_API_KEY"         # Environment variable holding API key
+provider = "codex-cli"                    # "codex-cli", "anthropic", "gemini", "openai", "groq", "ollama", etc.
+model = "gpt-5"                           # Model identifier
+api_key_env = ""                          # Empty for Codex CLI OAuth / desktop auth
 # base_url = "https://api.anthropic.com"  # Optional: override API endpoint
 
 [memory]
@@ -64,9 +64,17 @@ max_storage_mb = 5000                    # Maximum storage (5 GB)
 # dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"  # Sentry DSN (get from sentry.io project settings)
 environment = "development"              # Environment tag (production, staging, development)
 traces_sample_rate = 1.0                 # Sample 100% of traces (reduce to 0.1 in prod for 10% sampling)
-include_prompts = false                  # Include prompts/completions in events (WARNING: may contain PII)
+include_prompts = true                   # Workstation default: include prompts/completions for deep debugging
 performance_monitoring = true            # Track LLM call latency, tokens, cost
 error_tracking = true                    # Capture errors with full context
+attach_stacktrace = false                # Keep canonical log events free of native stacktrace processing errors
+enable_logs = true                       # Enable canonical wide-event capture
+realtime_log_flush = false               # Flush after each event only when you want near-real-time Sentry UI updates
+realtime_log_flush_timeout_ms = 1500     # Max time to block per event while flushing
+wide_event_attribute_max_bytes = 16384   # Per-attribute truncation guard
+wide_event_payload_max_bytes = 524288    # Total event payload guard
+claude_capture_payloads = true           # Include Claude session/task payloads
+mcp_capture_payloads = true              # Include MCP request/response payloads
 
 # Optional: Custom tags added to all Sentry events
 [sentry.tags]

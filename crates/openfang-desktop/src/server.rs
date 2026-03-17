@@ -5,6 +5,8 @@
 
 use openfang_api::server::build_router;
 use openfang_kernel::OpenFangKernel;
+use openfang_runtime::sentry_logs::capture_structured_log;
+use sentry::Level;
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -30,6 +32,18 @@ impl ServerHandle {
             let _ = handle.join();
         }
         self.kernel.shutdown();
+        capture_structured_log(
+            Level::Info,
+            "desktop.lifecycle.stopped",
+            std::collections::BTreeMap::from([
+                (
+                    "event.kind".to_string(),
+                    serde_json::json!("desktop.lifecycle.stopped"),
+                ),
+                ("outcome".to_string(), serde_json::json!("success")),
+                ("desktop.port".to_string(), serde_json::json!(self.port)),
+            ]),
+        );
         info!("OpenFang embedded server stopped");
     }
 }
@@ -58,6 +72,18 @@ pub fn start_server() -> Result<ServerHandle, Box<dyn std::error::Error>> {
     let listen_addr: SocketAddr = std_listener.local_addr()?;
 
     info!("OpenFang embedded server bound to http://127.0.0.1:{port}");
+    capture_structured_log(
+        Level::Info,
+        "desktop.lifecycle.server_ready",
+        std::collections::BTreeMap::from([
+            (
+                "event.kind".to_string(),
+                serde_json::json!("desktop.lifecycle.server_ready"),
+            ),
+            ("outcome".to_string(), serde_json::json!("success")),
+            ("desktop.port".to_string(), serde_json::json!(port)),
+        ]),
+    );
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let kernel_clone = kernel.clone();

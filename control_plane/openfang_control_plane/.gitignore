@@ -1,0 +1,11 @@
+/_build/
+/deps/
+/cover/
+/.elixir_ls/
+erl_crash.dump
+*.sqlite3
+*.sqlite3-*
+data/
+tmp/
+log/
+

@@ -7,6 +7,7 @@
 //! Connects to running daemon via HTTP, falls back to in-process kernel.
 
 use openfang_kernel::OpenFangKernel;
+use openfang_runtime::sentry_logs::{capture_structured_log, configure as configure_sentry_logs};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
@@ -135,6 +136,9 @@ pub fn run_mcp_server(config: Option<std::path::PathBuf>) {
 }
 
 fn create_backend(config: Option<std::path::PathBuf>) -> McpBackend {
+    let kernel_config = openfang_kernel::config::load_config(config.as_deref());
+    configure_sentry_logs(&kernel_config.sentry);
+
     // Try daemon first
     if let Some(base_url) = super::find_daemon() {
         let client = reqwest::blocking::Client::builder()
@@ -279,14 +283,50 @@ fn handle_message(backend: &McpBackend, msg: &Value) -> Option<Value> {
                 .as_str()
                 .unwrap_or("")
                 .to_string();
+            let rpc_id = id.clone().unwrap_or(Value::Null);
+
+            let start_attrs = std::collections::BTreeMap::from([
+                ("event.kind".to_string(), json!("mcp.tool_call.started")),
+                ("mcp.method".to_string(), json!(method)),
+                ("mcp.rpc_id".to_string(), rpc_id.clone()),
+                ("tool.name".to_string(), json!(tool_name)),
+                ("outcome".to_string(), json!("started")),
+                ("payload.input.message".to_string(), json!(message.clone())),
+            ]);
+            capture_structured_log(sentry::Level::Info, "mcp.tool_call.started", start_attrs);
 
             if message.is_empty() {
+                let fail_attrs = std::collections::BTreeMap::from([
+                    ("event.kind".to_string(), json!("mcp.tool_call.failed")),
+                    ("mcp.method".to_string(), json!(method)),
+                    ("mcp.rpc_id".to_string(), rpc_id),
+                    ("tool.name".to_string(), json!(tool_name)),
+                    ("outcome".to_string(), json!("error")),
+                    (
+                        "failure_reason".to_string(),
+                        json!("missing_message_argument"),
+                    ),
+                ]);
+                capture_structured_log(sentry::Level::Warning, "mcp.tool_call.failed", fail_attrs);
                 return Some(jsonrpc_error(id?, -32602, "Missing 'message' argument"));
             }
 
             let agent_id = match backend.resolve_tool_agent(tool_name) {
                 Some(id) => id,
                 None => {
+                    let fail_attrs = std::collections::BTreeMap::from([
+                        ("event.kind".to_string(), json!("mcp.tool_call.failed")),
+                        ("mcp.method".to_string(), json!(method)),
+                        ("mcp.rpc_id".to_string(), rpc_id),
+                        ("tool.name".to_string(), json!(tool_name)),
+                        ("outcome".to_string(), json!("error")),
+                        ("failure_reason".to_string(), json!("unknown_tool")),
+                    ]);
+                    capture_structured_log(
+                        sentry::Level::Warning,
+                        "mcp.tool_call.failed",
+                        fail_attrs,
+                    );
                     return Some(jsonrpc_error(
                         id?,
                         -32602,
@@ -296,25 +336,60 @@ fn handle_message(backend: &McpBackend, msg: &Value) -> Option<Value> {
             };
 
             match backend.send_message(&agent_id, &message) {
-                Ok(response) => Some(jsonrpc_response(
-                    id?,
-                    json!({
-                        "content": [{
-                            "type": "text",
-                            "text": response
-                        }]
-                    }),
-                )),
-                Err(e) => Some(jsonrpc_response(
-                    id?,
-                    json!({
-                        "content": [{
-                            "type": "text",
-                            "text": format!("Error: {e}")
-                        }],
-                        "isError": true
-                    }),
-                )),
+                Ok(response) => {
+                    let success_attrs = std::collections::BTreeMap::from([
+                        ("event.kind".to_string(), json!("mcp.tool_call.completed")),
+                        ("mcp.method".to_string(), json!(method)),
+                        ("mcp.rpc_id".to_string(), rpc_id),
+                        ("tool.name".to_string(), json!(tool_name)),
+                        ("agent.id".to_string(), json!(agent_id)),
+                        ("outcome".to_string(), json!("success")),
+                        (
+                            "payload.output.response".to_string(),
+                            json!(response.clone()),
+                        ),
+                    ]);
+                    capture_structured_log(
+                        sentry::Level::Info,
+                        "mcp.tool_call.completed",
+                        success_attrs,
+                    );
+                    Some(jsonrpc_response(
+                        id?,
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": response
+                            }]
+                        }),
+                    ))
+                }
+                Err(e) => {
+                    let fail_attrs = std::collections::BTreeMap::from([
+                        ("event.kind".to_string(), json!("mcp.tool_call.failed")),
+                        ("mcp.method".to_string(), json!(method)),
+                        ("mcp.rpc_id".to_string(), rpc_id),
+                        ("tool.name".to_string(), json!(tool_name)),
+                        ("agent.id".to_string(), json!(agent_id)),
+                        ("outcome".to_string(), json!("error")),
+                        ("failure_reason".to_string(), json!(e.clone())),
+                    ]);
+                    capture_structured_log(
+                        sentry::Level::Error,
+                        "mcp.tool_call.failed",
+                        fail_attrs,
+                    );
+                    Some(jsonrpc_response(
+                        id?,
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Error: {e}")
+                            }],
+                            "isError": true
+                        }),
+                    ))
+                }
             }
         }
 

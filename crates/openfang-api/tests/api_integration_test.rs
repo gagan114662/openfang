@@ -13,7 +13,7 @@ use openfang_api::routes::{self, AppState};
 use openfang_api::ws;
 use openfang_kernel::OpenFangKernel;
 use openfang_types::config::{DefaultModelConfig, KernelConfig};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -26,6 +26,7 @@ struct TestServer {
     base_url: String,
     state: Arc<AppState>,
     _tmp: tempfile::TempDir,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl Drop for TestServer {
@@ -51,6 +52,14 @@ async fn start_test_server_with_provider(
     model: &str,
     api_key_env: &str,
 ) -> TestServer {
+    let semaphore = TEST_SEMAPHORE
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone();
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .expect("Failed to acquire test semaphore");
+
     let tmp = tempfile::tempdir().expect("Failed to create temp dir");
 
     let config = KernelConfig {
@@ -81,6 +90,26 @@ async fn start_test_server_with_provider(
     let app = Router::new()
         .route("/api/health", axum::routing::get(routes::health))
         .route("/api/status", axum::routing::get(routes::status))
+        .route(
+            "/api/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
+        .route(
+            "/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
+        .route(
+            "/api/data/events",
+            axum::routing::get(routes::get_data_events),
+        )
+        .route(
+            "/api/data/events/export",
+            axum::routing::get(routes::export_data_events),
+        )
+        .route(
+            "/api/data/runs/{run_id}",
+            axum::routing::get(routes::get_data_run),
+        )
         .route(
             "/api/agents",
             axum::routing::get(routes::list_agents).post(routes::spawn_agent),
@@ -122,6 +151,10 @@ async fn start_test_server_with_provider(
             "/api/workflows/{id}/runs",
             axum::routing::get(routes::list_workflow_runs),
         )
+        .route(
+            "/api/mirofish/analyze-folder",
+            axum::routing::post(routes::mirofish_analyze_folder),
+        )
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
         .layer(axum::middleware::from_fn(middleware::request_logging))
         .layer(TraceLayer::new_for_http())
@@ -141,8 +174,141 @@ async fn start_test_server_with_provider(
         base_url: format!("http://{}", addr),
         state,
         _tmp: tmp,
+        _permit: permit,
     }
 }
+
+async fn start_test_server_with_mirofish_roots(allowed_local_roots: Vec<String>) -> TestServer {
+    let semaphore = TEST_SEMAPHORE
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone();
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .expect("Failed to acquire test semaphore");
+
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+
+    let mut config = KernelConfig {
+        home_dir: tmp.path().to_path_buf(),
+        data_dir: tmp.path().join("data"),
+        default_model: DefaultModelConfig {
+            provider: "ollama".to_string(),
+            model: "test-model".to_string(),
+            api_key_env: "OLLAMA_API_KEY".to_string(),
+            base_url: None,
+        },
+        ..KernelConfig::default()
+    };
+    config.mirofish.enabled = true;
+    config.mirofish.base_url = "http://127.0.0.1:5001".to_string();
+    config.mirofish.allowed_local_roots = allowed_local_roots;
+
+    let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+    let kernel = Arc::new(kernel);
+    kernel.set_self_handle();
+
+    let state = Arc::new(AppState {
+        kernel,
+        started_at: Instant::now(),
+        peer_registry: None,
+        bridge_manager: tokio::sync::Mutex::new(None),
+        channels_config: tokio::sync::RwLock::new(Default::default()),
+        shutdown_notify: Arc::new(tokio::sync::Notify::new()),
+    });
+
+    let app = Router::new()
+        .route("/api/health", axum::routing::get(routes::health))
+        .route("/api/status", axum::routing::get(routes::status))
+        .route(
+            "/api/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
+        .route(
+            "/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
+        .route(
+            "/api/data/events",
+            axum::routing::get(routes::get_data_events),
+        )
+        .route(
+            "/api/data/events/export",
+            axum::routing::get(routes::export_data_events),
+        )
+        .route(
+            "/api/data/runs/{run_id}",
+            axum::routing::get(routes::get_data_run),
+        )
+        .route(
+            "/api/agents",
+            axum::routing::get(routes::list_agents).post(routes::spawn_agent),
+        )
+        .route(
+            "/api/agents/{id}/message",
+            axum::routing::post(routes::send_message),
+        )
+        .route(
+            "/api/agents/{id}/session",
+            axum::routing::get(routes::get_agent_session),
+        )
+        .route("/api/agents/{id}/ws", axum::routing::get(ws::agent_ws))
+        .route(
+            "/api/agents/{id}",
+            axum::routing::delete(routes::kill_agent),
+        )
+        .route(
+            "/api/agents/{id}/email",
+            axum::routing::get(routes::get_agent_email),
+        )
+        .route(
+            "/api/triggers",
+            axum::routing::get(routes::list_triggers).post(routes::create_trigger),
+        )
+        .route(
+            "/api/triggers/{id}",
+            axum::routing::delete(routes::delete_trigger),
+        )
+        .route(
+            "/api/workflows",
+            axum::routing::get(routes::list_workflows).post(routes::create_workflow),
+        )
+        .route(
+            "/api/workflows/{id}/run",
+            axum::routing::post(routes::run_workflow),
+        )
+        .route(
+            "/api/workflows/{id}/runs",
+            axum::routing::get(routes::list_workflow_runs),
+        )
+        .route(
+            "/api/mirofish/analyze-folder",
+            axum::routing::post(routes::mirofish_analyze_folder),
+        )
+        .route("/api/shutdown", axum::routing::post(routes::shutdown))
+        .layer(axum::middleware::from_fn(middleware::request_logging))
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
+        .with_state(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind test server");
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    TestServer {
+        base_url: format!("http://{}", addr),
+        state,
+        _tmp: tmp,
+        _permit: permit,
+    }
+}
+
+static TEST_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 /// Manifest that uses ollama (no API key required, won't make real LLM calls).
 const TEST_MANIFEST: &str = r#"
@@ -229,6 +395,143 @@ async fn test_status_endpoint() {
     assert!(body["uptime_seconds"].is_number());
     assert_eq!(body["default_provider"], "ollama");
     assert_eq!(body["agents"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_mirofish_analyze_folder_rejects_outside_allowlist() {
+    let allowed_root_tmp = tempfile::tempdir().unwrap();
+    let allowed_root = allowed_root_tmp.path().display().to_string();
+    let server = start_test_server_with_mirofish_roots(vec![allowed_root]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{}/api/mirofish/analyze-folder", server.base_url))
+        .json(&serde_json::json!({
+            "folder_path": "/Users/gaganarora",
+            "topic": "forecast failure cascades",
+            "mode": "fast"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "failed");
+    assert_eq!(body["failed_stage"], "scan");
+    assert!(body["run_id"].is_string());
+}
+
+#[tokio::test]
+async fn test_mirofish_analyze_folder_skips_static_topic_inside_allowlist() {
+    let root_tmp = tempfile::tempdir().unwrap();
+    let repo_dir = root_tmp.path().join("repo");
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    std::fs::write(repo_dir.join("README.md"), "# Demo\nHello").unwrap();
+    std::fs::write(repo_dir.join("main.rs"), "fn main() { println!(\"hi\"); }").unwrap();
+
+    let server = start_test_server_with_mirofish_roots(vec![root_tmp.path().display().to_string()]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{}/api/mirofish/analyze-folder", server.base_url))
+        .json(&serde_json::json!({
+            "folder_path": repo_dir.display().to_string(),
+            "topic": "summarize architecture and file layout",
+            "mode": "fast"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "skipped");
+    assert!(body["run_id"].is_string());
+    assert_eq!(body["auto_trigger"]["should_run"], false);
+    assert!(body["scan_summary"]["files_included"].as_u64().unwrap_or(0) >= 1);
+}
+
+#[tokio::test]
+async fn test_data_events_endpoint_returns_api_request_rows() {
+    let server = start_test_server().await;
+    let client = reqwest::Client::new();
+
+    let health = client
+        .get(format!("{}/api/health", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+
+    let resp = client
+        .get(format!(
+            "{}/api/data/events?event_kind=api.request&limit=10",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let events = body["events"].as_array().unwrap();
+    assert!(!events.is_empty());
+    assert_eq!(events[0]["event_kind"], "api.request");
+    assert!(events[0]["request_id"].is_string());
+    assert!(events[0]["run_id"].is_string());
+    assert!(events[0]["trace_id"].is_string());
+    assert!(body["has_more"].is_boolean());
+}
+
+#[tokio::test]
+async fn test_guard_report_endpoint_records_canonical_event() {
+    let server = start_test_server().await;
+    let client = reqwest::Client::new();
+    let request_id = "guard-request-1";
+
+    let resp = client
+        .post(format!("{}/api/ops/guard/report", server.base_url))
+        .json(&serde_json::json!({
+            "kind": "ops.guard.heartbeat",
+            "host_role": "primary",
+            "host_name": "test-host",
+            "service_name": "openfang.service",
+            "service_state": "active",
+            "request_id": request_id,
+            "outcome": "pass",
+            "blockers": [],
+            "payload": {
+                "status": "pass"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 202);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["event_kind"], "ops.guard.heartbeat");
+    assert_eq!(body["outcome"], "success");
+    assert!(body["event_id"].is_string());
+
+    let resp = client
+        .get(format!(
+            "{}/api/data/events?event_kind=ops.guard.heartbeat&run_id={request_id}&limit=10",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event_kind"], "ops.guard.heartbeat");
+    assert_eq!(events[0]["run_id"], request_id);
+    assert_eq!(events[0]["request_id"], request_id);
+    assert_eq!(events[0]["outcome"], "success");
 }
 
 #[tokio::test]
@@ -680,6 +983,14 @@ memory_write = ["self.*"]
 
 /// Start a test server with Bearer-token authentication enabled.
 async fn start_test_server_with_auth(api_key: &str) -> TestServer {
+    let semaphore = TEST_SEMAPHORE
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone();
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .expect("Failed to acquire test semaphore");
+
     let tmp = tempfile::tempdir().expect("Failed to create temp dir");
 
     let config = KernelConfig {
@@ -754,6 +1065,10 @@ async fn start_test_server_with_auth(api_key: &str) -> TestServer {
             "/api/workflows/{id}/runs",
             axum::routing::get(routes::list_workflow_runs),
         )
+        .route(
+            "/api/mirofish/analyze-folder",
+            axum::routing::post(routes::mirofish_analyze_folder),
+        )
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
         .layer(axum::middleware::from_fn_with_state(
             api_key_state,
@@ -777,6 +1092,7 @@ async fn start_test_server_with_auth(api_key: &str) -> TestServer {
         base_url: format!("http://{}", addr),
         state,
         _tmp: tmp,
+        _permit: permit,
     }
 }
 

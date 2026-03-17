@@ -1,0 +1,13 @@
+{
+  "errors": [
+    "missing token in env var: SENTRY_AUTH_TOKEN"
+  ],
+  "findings": [],
+  "generated_at": "2026-03-07T02:16:14.982695+00:00",
+  "head_sha": "539050226200c24edd248aa2f6de73ea7096d674",
+  "org": "openfang-monitoring",
+  "project": "openfang-monitoring",
+  "provider": "sentry",
+  "query": "is:unresolved level:error",
+  "status": "missing"
+}

@@ -131,7 +131,7 @@ impl ApprovalManager {
         match tool_name {
             "shell_exec" => RiskLevel::Critical,
             "file_write" | "file_delete" => RiskLevel::High,
-            "web_fetch" | "browser_navigate" => RiskLevel::Medium,
+            "web_fetch" | "browser_navigate" | "sentry_query" => RiskLevel::Medium,
             _ => RiskLevel::Low,
         }
     }
@@ -396,7 +396,10 @@ mod tests {
     fn test_policy_defaults() {
         let mgr = default_manager();
         let policy = mgr.policy();
-        assert_eq!(policy.require_approval, vec!["shell_exec".to_string()]);
+        assert_eq!(
+            policy.require_approval,
+            vec!["shell_exec".to_string(), "sentry_query".to_string()]
+        );
         assert_eq!(policy.timeout_secs, 60);
         assert!(!policy.auto_approve_autonomous);
     }

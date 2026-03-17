@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use openfang_types::message::{ContentBlock, Message, StopReason, TokenUsage};
 use openfang_types::tool::{ToolCall, ToolDefinition};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Error type for LLM driver operations.
@@ -59,6 +60,8 @@ pub struct CompletionRequest {
     pub system: Option<String>,
     /// Extended thinking configuration (if supported by the model).
     pub thinking: Option<openfang_types::config::ThinkingConfig>,
+    /// Parent Sentry span for provider-specific child spans such as tool execution.
+    pub sentry_parent_span: Option<Arc<sentry::TransactionOrSpan>>,
 }
 
 /// A response from an LLM completion.
@@ -270,6 +273,7 @@ mod tests {
             temperature: 0.0,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let response = driver.stream(request, tx).await.unwrap();

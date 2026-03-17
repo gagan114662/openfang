@@ -1,6 +1,8 @@
 //! Video summary renderer for post-execution agent demonstrations.
 
+use crate::sentry_logs::{capture_structured_log, current_event_context, record_artifact};
 use openfang_types::config::VideoConfig;
+use openfang_types::facts::ArtifactRecord;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
@@ -75,6 +77,44 @@ impl VideoRenderer {
         // For now, create empty file as placeholder
         std::fs::write(&video_path, b"")
             .map_err(|e| format!("Failed to create video file: {}", e))?;
+
+        let context = current_event_context().unwrap_or_default();
+        let artifact_id = format!("recording:{agent_id}:{task_id}");
+        record_artifact(ArtifactRecord {
+            artifact_id: artifact_id.clone(),
+            run_id: context.run_id,
+            session_id: context.session_id,
+            agent_id: Some(agent_id.to_string()),
+            artifact_kind: "video_recording".to_string(),
+            storage_path: video_path.to_string_lossy().to_string(),
+            content_type: Some("video/mp4".to_string()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            metadata_json: serde_json::json!({
+                "task_id": task_id,
+                "event_count": audit_events.len(),
+            }),
+        });
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            "event.kind".to_string(),
+            serde_json::json!("artifact.recorded"),
+        );
+        attrs.insert(
+            "artifact.id".to_string(),
+            serde_json::json!(artifact_id.clone()),
+        );
+        attrs.insert("artifact.ids".to_string(), serde_json::json!([artifact_id]));
+        attrs.insert("agent.id".to_string(), serde_json::json!(agent_id));
+        attrs.insert("outcome".to_string(), serde_json::json!("success"));
+        attrs.insert(
+            "payload.recording.task_id".to_string(),
+            serde_json::json!(task_id),
+        );
+        attrs.insert(
+            "payload.recording.path".to_string(),
+            serde_json::json!(video_path.to_string_lossy().to_string()),
+        );
+        capture_structured_log(sentry::Level::Info, "artifact.recorded", attrs);
 
         info!(path = %video_path.display(), "Video summary rendered");
         Ok(video_path)

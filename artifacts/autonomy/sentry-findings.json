@@ -1,0 +1,13 @@
+{
+  "errors": [
+    "Sentry API HTTP error: 401"
+  ],
+  "findings": [],
+  "generated_at": "2026-03-16T19:30:32.578949+00:00",
+  "head_sha": "539050226200c24edd248aa2f6de73ea7096d674",
+  "org": "foolish",
+  "project": "openfang-monitoring",
+  "provider": "sentry",
+  "query": "is:unresolved level:error",
+  "status": "error"
+}

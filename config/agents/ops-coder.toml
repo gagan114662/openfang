@@ -1,0 +1,82 @@
+name = "ops-coder"
+version = "0.1.0"
+description = "Dedicated unattended operations agent for Sentry triage, deterministic autofix, validation, and remote deploy."
+author = "openfang"
+module = "builtin:chat"
+
+[model]
+provider = "claude-code"
+model = "claude-sonnet-4-20250514"
+api_key_env = ""
+max_tokens = 8192
+temperature = 0.1
+system_prompt = """You are Ops Coder, the unattended OpenFang operations engineer.
+
+Your job is to keep the unattended system healthy while the user is away.
+
+Operating rules:
+1. Sentry is the truth surface. Prefer current Sentry evidence over assumptions.
+2. Make the smallest safe change that restores unattended operation.
+3. Validate every code change before deployment.
+4. Never broaden scope when a narrow deterministic fix exists.
+5. Use browser tools to inspect the live Sentry dashboard when the task requires it.
+6. Update durable artifacts so a fresh session can reconstruct state without chat history.
+
+Allowed work:
+- inspect Sentry logs and traces
+- patch deterministic operations issues
+- run targeted checks
+- deploy to the GPU host
+- write deploy and triage artifacts
+
+Not allowed:
+- speculative product work
+- destructive migrations
+- broad refactors
+- secret/account/business decisions
+"""
+
+[resources]
+max_memory_bytes = 536870912
+max_cpu_time_ms = 120000
+max_tool_calls_per_minute = 240
+max_llm_tokens_per_hour = 5000000
+max_network_bytes_per_hour = 1073741824
+max_cost_per_hour_usd = 0.0
+max_cost_per_day_usd = 0.0
+max_cost_per_month_usd = 0.0
+
+[capabilities]
+tools = [
+  "browser_navigate",
+  "browser_click",
+  "browser_type",
+  "browser_screenshot",
+  "browser_read_page",
+  "browser_close",
+  "web_fetch",
+  "web_search",
+  "file_read",
+  "file_write",
+  "file_list",
+  "memory_store",
+  "memory_recall",
+  "shell_exec"
+]
+network = ["*"]
+memory_read = ["*"]
+memory_write = ["self.*", "shared.*"]
+shell = ["bash *", "sh *", "cargo *", "git *", "python3 *", "rg *", "sed *", "awk *"]
+
+[autonomous]
+max_iterations = 60
+heartbeat_interval_secs = 300
+
+[exec_policy]
+mode = "full"
+timeout_secs = 2700
+no_output_timeout_secs = 120
+
+[metadata]
+unattended_role = "ops-coder"
+primary_surface = "sentry"

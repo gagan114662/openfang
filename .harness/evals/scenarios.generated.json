@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "description": "Generated candidate scenarios mined from novel production failures. Candidate-only by default.",
+  "profile": "nightly-generated",
+  "generated_at": "",
+  "scenarios": []
+}

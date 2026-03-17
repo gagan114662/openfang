@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openfang.dev/schemas/infra-preflight-report.schema.json",
+  "title": "InfraPreflightReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflow",
+    "status",
+    "attempts_configured",
+    "attempts_used",
+    "generated_at",
+    "checks",
+    "errors"
+  ],
+  "properties": {
+    "workflow": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "missing", "error"]
+    },
+    "attempts_configured": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempts_used": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "transient_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "category", "detail", "transient"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"type": "string", "enum": ["pass", "fail"]},
+          "category": {"type": "string"},
+          "detail": {"type": "string"},
+          "transient": {"type": "boolean"}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

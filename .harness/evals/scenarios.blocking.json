@@ -1,0 +1,1130 @@
+{
+  "version": "1.0.0",
+  "description": "Deterministic blocking eval scenarios for OpenFang core + harness.",
+  "profile": "blocking",
+  "scenarios": [
+    {
+      "id": "routing-email-target-agent-metadata",
+      "name": "Email routing metadata is preserved",
+      "tier": "blocking",
+      "surface": "channels",
+      "setup": {
+        "component": "openfang-channels",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-channels/src/email.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/email.rs",
+        "pattern": "target_agent_name"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/email.rs",
+        "pattern": "target_agent_name"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": true,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "crates/openfang-channels/src/email.rs",
+        "line_hint_pattern": "target_agent_name",
+        "summary": "Email target agent metadata appears missing and can break direct routing."
+      }
+    },
+    {
+      "id": "routing-bridge-resolves-target-agent-name",
+      "name": "Bridge resolves target agent by metadata",
+      "tier": "blocking",
+      "surface": "channels",
+      "setup": {
+        "component": "openfang-channels",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-channels/src/bridge.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/bridge.rs",
+        "pattern": "target_agent_name"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/bridge.rs",
+        "pattern": "target_agent_name"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": true,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "crates/openfang-channels/src/bridge.rs",
+        "line_hint_pattern": "target_agent_name",
+        "summary": "Bridge no longer resolves target agent metadata for channel dispatch."
+      }
+    },
+    {
+      "id": "routing-router-user-default-support",
+      "name": "Router supports user default mapping",
+      "tier": "blocking",
+      "surface": "channels",
+      "setup": {
+        "component": "openfang-channels",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-channels/src/router.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/router.rs",
+        "pattern": "set_user_default"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/router.rs",
+        "pattern": "set_user_default"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": true,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "crates/openfang-channels/src/router.rs",
+        "line_hint_pattern": "set_user_default",
+        "summary": "User-specific default routing API appears missing from router."
+      }
+    },
+    {
+      "id": "routing-router-system-default-support",
+      "name": "Router supports system default mapping",
+      "tier": "blocking",
+      "surface": "channels",
+      "setup": {
+        "component": "openfang-channels",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-channels/src/router.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/router.rs",
+        "pattern": "set_default"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-channels/src/router.rs",
+        "pattern": "set_default"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": true,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "crates/openfang-channels/src/router.rs",
+        "line_hint_pattern": "set_default",
+        "summary": "System default routing API appears missing from router."
+      }
+    },
+    {
+      "id": "webhook-wake-token-validation",
+      "name": "Webhook wake endpoint validates bearer token",
+      "tier": "blocking",
+      "surface": "api",
+      "setup": {
+        "component": "openfang-api",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-api/src/routes.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "validate_webhook_token"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "pub async fn webhook_wake"
+      },
+      "failure_class": "webhook_auth_rejection",
+      "remediable": true,
+      "owner": "api",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": "crates/openfang-api/src/routes.rs",
+        "line_hint_pattern": "pub async fn webhook_wake",
+        "summary": "Webhook wake path may have lost auth validation coverage."
+      }
+    },
+    {
+      "id": "webhook-agent-token-validation",
+      "name": "Webhook agent endpoint validates bearer token",
+      "tier": "blocking",
+      "surface": "api",
+      "setup": {
+        "component": "openfang-api",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-api/src/routes.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "pub async fn webhook_agent"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "pub async fn webhook_agent"
+      },
+      "failure_class": "webhook_auth_rejection",
+      "remediable": true,
+      "owner": "api",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": "crates/openfang-api/src/routes.rs",
+        "line_hint_pattern": "pub async fn webhook_agent",
+        "summary": "Webhook agent path may have lost auth validation coverage."
+      }
+    },
+    {
+      "id": "webhook-constant-time-compare",
+      "name": "Webhook auth uses constant-time comparison",
+      "tier": "blocking",
+      "surface": "api",
+      "setup": {
+        "component": "openfang-api",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-api/src/routes.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "ct_eq"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-api/src/routes.rs",
+        "pattern": "ct_eq"
+      },
+      "failure_class": "webhook_auth_rejection",
+      "remediable": true,
+      "owner": "api",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "crates/openfang-api/src/routes.rs",
+        "line_hint_pattern": "ct_eq",
+        "summary": "Webhook token comparison no longer appears constant-time."
+      }
+    },
+    {
+      "id": "sentry-transaction-finish-called",
+      "name": "Agent loop always finishes Sentry transaction",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "transaction.finish\\("
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "transaction.finish\\("
+      },
+      "failure_class": "retry_timeout_handling",
+      "remediable": true,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "line_hint_pattern": "transaction.finish",
+        "summary": "Sentry transaction finalization call appears missing."
+      }
+    },
+    {
+      "id": "sentry-scope-span-cleared",
+      "name": "Agent loop clears active span after transaction",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "set_span\\(None\\)"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "set_span\\(None\\)"
+      },
+      "failure_class": "retry_timeout_handling",
+      "remediable": true,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "line_hint_pattern": "set_span(None)",
+        "summary": "Sentry scope cleanup call appears missing after transaction finalization."
+      }
+    },
+    {
+      "id": "sentry-sanitize-helper-exists",
+      "name": "Sentry sanitize helper exists",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "sanitize_sentry_message"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "sanitize_sentry_message"
+      },
+      "failure_class": "sentry_redaction_invariants",
+      "remediable": true,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "line_hint_pattern": "sanitize_sentry_message",
+        "summary": "Sentry sanitize helper appears missing from runtime loop path."
+      }
+    },
+    {
+      "id": "sentry-no-raw-error-extra",
+      "name": "Raw error extras are not attached to Sentry scope",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "regex_absent",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "set_extra\\(\"raw_error\""
+      },
+      "judge": {
+        "kind": "regex_absent",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "set_extra\\(\"raw_error\""
+      },
+      "failure_class": "sentry_redaction_invariants",
+      "remediable": true,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "line": 1,
+        "summary": "Raw error payload appears to be attached to Sentry scope and can leak sensitive data."
+      }
+    },
+    {
+      "id": "sentry-capture-rate-limited",
+      "name": "Sentry capture is rate-limited",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "rate_limited_sentry_capture"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "pattern": "rate_limited_sentry_capture"
+      },
+      "failure_class": "retry_timeout_handling",
+      "remediable": true,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "crates/openfang-runtime/src/agent_loop.rs",
+        "line_hint_pattern": "rate_limited_sentry_capture",
+        "summary": "Rate-limited Sentry capture helper appears missing."
+      }
+    },
+    {
+      "id": "policy-has-remediation-guardrails",
+      "name": "Policy contract contains remediation guardrails",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails"
+      },
+      "judge": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails"
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": ".harness/policy.contract.json",
+        "line_hint_pattern": "\"remediationGuardrails\"",
+        "summary": "Policy contract remediation guardrails are missing."
+      }
+    },
+    {
+      "id": "policy-blocked-paths-configured",
+      "name": "Blocked remediation paths are configured",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_array_min_length",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.blockedPaths",
+        "min_length": 1
+      },
+      "judge": {
+        "kind": "json_array_min_length",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.blockedPaths",
+        "min_length": 1
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "critical",
+      "finding": {
+        "path": ".harness/policy.contract.json",
+        "line_hint_pattern": "\"blockedPaths\"",
+        "summary": "Blocked remediation paths list is missing or empty."
+      }
+    },
+    {
+      "id": "policy-allowed-paths-configured",
+      "name": "Allowed remediation paths are configured",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_array_min_length",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.allowedPaths",
+        "min_length": 1
+      },
+      "judge": {
+        "kind": "json_array_min_length",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.allowedPaths",
+        "min_length": 1
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": ".harness/policy.contract.json",
+        "line_hint_pattern": "\"allowedPaths\"",
+        "summary": "Allowed remediation paths list is missing or empty."
+      }
+    },
+    {
+      "id": "policy-max-files-guardrail",
+      "name": "Max files per remediation PR is bounded",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_number_range",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.maxFilesPerPR",
+        "min": 1,
+        "max": 50
+      },
+      "judge": {
+        "kind": "json_number_range",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.maxFilesPerPR",
+        "min": 1,
+        "max": 50
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": ".harness/policy.contract.json",
+        "line_hint_pattern": "\"maxFilesPerPR\"",
+        "summary": "Max files per remediation PR is missing or outside safe bounds."
+      }
+    },
+    {
+      "id": "policy-max-lines-guardrail",
+      "name": "Max lines per remediation file is bounded",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_number_range",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.maxLinesPerFile",
+        "min": 10,
+        "max": 2000
+      },
+      "judge": {
+        "kind": "json_number_range",
+        "path": ".harness/policy.contract.json",
+        "field": "remediationGuardrails.maxLinesPerFile",
+        "min": 10,
+        "max": 2000
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": ".harness/policy.contract.json",
+        "line_hint_pattern": "\"maxLinesPerFile\"",
+        "summary": "Max lines per remediation file is missing or outside safe bounds."
+      }
+    },
+    {
+      "id": "remediation-runner-supports-eval-provider",
+      "name": "Remediation runner accepts eval provider",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/remediation_runner.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/remediation_runner.py",
+        "pattern": "\"eval\""
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/remediation_runner.py",
+        "pattern": "supported_providers"
+      },
+      "failure_class": "remediation_guardrail_enforcement",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": "scripts/harness/remediation_runner.py",
+        "line_hint_pattern": "supported_providers",
+        "summary": "Remediation runner may reject eval findings provider."
+      }
+    },
+    {
+      "id": "codex-failover-rate-limit-signatures",
+      "name": "Codex failover checks rate-limit signatures",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/codex_failover_runner.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/codex_failover_runner.py",
+        "pattern": "RATE_LIMIT_SIGNATURES"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/codex_failover_runner.py",
+        "pattern": "RATE_LIMIT_SIGNATURES"
+      },
+      "failure_class": "retry_timeout_handling",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "scripts/harness/codex_failover_runner.py",
+        "line_hint_pattern": "RATE_LIMIT_SIGNATURES",
+        "summary": "Codex failover rate-limit signature set appears missing."
+      }
+    },
+    {
+      "id": "codex-failover-secondary-trigger",
+      "name": "Codex failover triggers secondary account on rate-limit",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/codex_failover_runner.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/codex_failover_runner.py",
+        "pattern": "failover_triggered"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/codex_failover_runner.py",
+        "pattern": "trigger_reason"
+      },
+      "failure_class": "retry_timeout_handling",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "scripts/harness/codex_failover_runner.py",
+        "line_hint_pattern": "trigger_reason",
+        "summary": "Codex failover metadata/trigger behavior appears incomplete."
+      }
+    },
+    {
+      "id": "claude-workflow-label-gate-present",
+      "name": "Claude remediation workflow has label gate",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "workflows",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": ".github/workflows/claude-remediation-agent.yml"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": ".github/workflows/claude-remediation-agent.yml",
+        "pattern": "claude-remediate"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": ".github/workflows/claude-remediation-agent.yml",
+        "pattern": "Evaluate label gate"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": ".github/workflows/claude-remediation-agent.yml",
+        "line_hint_pattern": "Evaluate label gate",
+        "summary": "Claude remediation label gate step appears missing."
+      }
+    },
+    {
+      "id": "sentry-workflow-uses-codex-failover",
+      "name": "Sentry remediation uses codex failover runner",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "workflows",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": ".github/workflows/sentry-remediation-agent.yml"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": ".github/workflows/sentry-remediation-agent.yml",
+        "pattern": "codex_failover_runner.py"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": ".github/workflows/sentry-remediation-agent.yml",
+        "pattern": "codex_failover_runner.py"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "high",
+      "finding": {
+        "path": ".github/workflows/sentry-remediation-agent.yml",
+        "line_hint_pattern": "codex_failover_runner.py",
+        "summary": "Sentry remediation no longer appears to route through Codex failover runner."
+      }
+    },
+    {
+      "id": "risk-gate-loads-claude-findings",
+      "name": "Risk gate accepts Claude findings input",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/risk_policy_gate.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/risk_policy_gate.py",
+        "pattern": "--claude-findings"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/risk_policy_gate.py",
+        "pattern": "--claude-findings"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "scripts/harness/risk_policy_gate.py",
+        "line_hint_pattern": "--claude-findings",
+        "summary": "Risk policy gate no longer accepts Claude findings artifact input."
+      }
+    },
+    {
+      "id": "pr-harness-video-minimum-enforced",
+      "name": "PR harness enforces minimum video evidence",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/browser_evidence_verify.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "pattern": "min_videos"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "pattern": "insufficient videos"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "line_hint_pattern": "insufficient videos",
+        "summary": "Video evidence threshold enforcement appears missing in manifest verifier."
+      }
+    },
+    {
+      "id": "pr-harness-screenshot-minimum-enforced",
+      "name": "PR harness enforces minimum screenshot evidence",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/browser_evidence_verify.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "pattern": "min_screenshots"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "pattern": "insufficient screenshots"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "medium",
+      "finding": {
+        "path": "scripts/harness/browser_evidence_verify.py",
+        "line_hint_pattern": "insufficient screenshots",
+        "summary": "Screenshot evidence threshold enforcement appears missing in manifest verifier."
+      }
+    },
+    {
+      "id": "checks-resolver-maps-ci-check",
+      "name": "Checks resolver maps build alias to ci-check",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/checks_resolver.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/checks_resolver.py",
+        "pattern": "\"build\": \"ci-check\""
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/checks_resolver.py",
+        "pattern": "\"build\": \"ci-check\""
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low",
+      "finding": {
+        "path": "scripts/harness/checks_resolver.py",
+        "line_hint_pattern": "\"build\": \"ci-check\"",
+        "summary": "Checks resolver alias mapping for build -> ci-check appears missing."
+      }
+    },
+    {
+      "id": "checks-resolver-maps-agent-evals",
+      "name": "Checks resolver maps agent eval check alias",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "scripts/harness/checks_resolver.py"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "scripts/harness/checks_resolver.py",
+        "pattern": "agent-evals-pr"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "scripts/harness/checks_resolver.py",
+        "pattern": "agent-evals-pr"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": true,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low",
+      "finding": {
+        "path": "scripts/harness/checks_resolver.py",
+        "line_hint_pattern": "agent-evals-pr",
+        "summary": "Checks resolver missing agent eval check alias."
+      }
+    },
+    {
+      "id": "kernel-workflow-integration-test-exists",
+      "name": "Kernel workflow integration test exists",
+      "tier": "blocking",
+      "surface": "kernel",
+      "setup": {
+        "component": "openfang-kernel",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs"
+      },
+      "failure_class": "memory_isolation",
+      "remediable": false,
+      "owner": "kernel",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "api-integration-test-exists",
+      "name": "API integration test exists",
+      "tier": "blocking",
+      "surface": "api",
+      "setup": {
+        "component": "openfang-api",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-api/tests/api_integration_test.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-api/tests/api_integration_test.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-api/tests/api_integration_test.rs"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": false,
+      "owner": "api",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "channels-bridge-integration-test-exists",
+      "name": "Channels bridge integration test exists",
+      "tier": "blocking",
+      "surface": "channels",
+      "setup": {
+        "component": "openfang-channels",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-channels/tests/bridge_integration_test.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-channels/tests/bridge_integration_test.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-channels/tests/bridge_integration_test.rs"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": false,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "risk-policy-gate-workflow-exists",
+      "name": "Risk policy gate workflow exists",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "workflows",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": ".github/workflows/risk-policy-gate.yml"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": ".github/workflows/risk-policy-gate.yml"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": ".github/workflows/risk-policy-gate.yml"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "pr-review-harness-workflow-exists",
+      "name": "PR review harness workflow exists",
+      "tier": "blocking",
+      "surface": "harness",
+      "setup": {
+        "component": "workflows",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": ".github/workflows/pr-review-harness.yml"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": ".github/workflows/pr-review-harness.yml"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": ".github/workflows/pr-review-harness.yml"
+      },
+      "failure_class": "tool_guardrails",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "frozen-llm-routing-fixture",
+      "name": "Frozen fixture for routing class remains deterministic",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "eval-fixtures",
+        "mode": "frozen"
+      },
+      "stimulus": {
+        "kind": "fixture_lookup",
+        "fixture": "routing_correctness"
+      },
+      "expected": {
+        "kind": "fixture_contains",
+        "fixture": "routing_correctness",
+        "contains": "deterministic"
+      },
+      "judge": {
+        "kind": "fixture_contains",
+        "fixture": "routing_correctness",
+        "contains": "deterministic"
+      },
+      "failure_class": "routing_correctness",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "info"
+    },
+    {
+      "id": "frozen-llm-sentry-fixture",
+      "name": "Frozen fixture for sentry class remains deterministic",
+      "tier": "blocking",
+      "surface": "runtime",
+      "setup": {
+        "component": "eval-fixtures",
+        "mode": "frozen"
+      },
+      "stimulus": {
+        "kind": "fixture_lookup",
+        "fixture": "sentry_redaction_invariants"
+      },
+      "expected": {
+        "kind": "fixture_contains",
+        "fixture": "sentry_redaction_invariants",
+        "contains": "deterministic"
+      },
+      "judge": {
+        "kind": "fixture_contains",
+        "fixture": "sentry_redaction_invariants",
+        "contains": "deterministic"
+      },
+      "failure_class": "sentry_redaction_invariants",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "info"
+    }
+  ]
+}

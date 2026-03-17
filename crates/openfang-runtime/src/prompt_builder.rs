@@ -438,6 +438,13 @@ pub fn tool_category(name: &str) -> &'static str {
             "Processes"
         }
 
+        "mirofish_build_graph"
+        | "mirofish_simulate"
+        | "mirofish_status"
+        | "mirofish_interview"
+        | "mirofish_report"
+        | "mirofish_list_agents" => "Simulation",
+
         _ if name.starts_with("mcp_") => "MCP",
         _ if name.starts_with("skill_") => "Skills",
         _ => "Other",
@@ -511,6 +518,14 @@ pub fn tool_hint(name: &str) -> &'static str {
         "process_write" => "write to a process's stdin",
         "process_kill" => "terminate a running process",
         "process_list" => "list active processes",
+
+        // MiroFish simulation
+        "mirofish_build_graph" => "build a knowledge graph from seed documents",
+        "mirofish_simulate" => "run a scenario simulation on a graph",
+        "mirofish_status" => "check simulation progress and completion",
+        "mirofish_interview" => "ask simulated agents follow-up questions",
+        "mirofish_report" => "generate a synthesis report from outcomes",
+        "mirofish_list_agents" => "list simulated agents available for interview",
 
         _ => "",
     }

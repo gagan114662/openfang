@@ -1187,6 +1187,11 @@ fn launch_desktop_app(_openfang_dir: &std::path::Path) {
 
 /// Auto-detect the best available provider.
 fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
+    if is_codex_cli_available() {
+        ui::success("Detected Codex CLI desktop auth");
+        return ("codex-cli", "", "gpt-5");
+    }
+
     let providers = provider_list();
 
     for (p, env_var, m, display) in &providers {
@@ -1200,14 +1205,15 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
         ui::success("Detected Gemini (GOOGLE_API_KEY)");
         return ("gemini", "GOOGLE_API_KEY", "gemini-2.5-flash");
     }
-    ui::hint("No LLM provider API keys found");
-    ui::hint("Groq offers a free tier: https://console.groq.com");
-    ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile")
+    ui::hint("No external provider API keys found; defaulting to Codex CLI");
+    ui::hint("Install/login Codex CLI for desktop-auth backed startup");
+    ("codex-cli", "", "gpt-5")
 }
 
 /// Static list of supported providers: (id, env_var, default_model, display_name).
 fn provider_list() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     vec![
+        ("codex-cli", "", "gpt-5", "Codex CLI"),
         ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile", "Groq"),
         ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash", "Gemini"),
         ("deepseek", "DEEPSEEK_API_KEY", "deepseek-chat", "DeepSeek"),
@@ -1398,7 +1404,7 @@ fn boot_kernel_error(e: &openfang_kernel::error::KernelError) {
     } else if msg.contains("key") || msg.contains("API") || msg.contains("auth") {
         ui::error_with_fix(
             "LLM provider authentication failed",
-            "Run `openfang doctor` to check your API key configuration",
+            "Run `openfang doctor` to check your provider or CLI auth configuration",
         );
     } else {
         ui::error_with_fix(
@@ -1906,9 +1912,9 @@ fn cmd_doctor(json: bool, repair: bool) {
 api_listen = "127.0.0.1:4200"
 
 [default_model]
-provider = "groq"
-model = "llama-3.3-70b-versatile"
-api_key_env = "GROQ_API_KEY"
+provider = "codex-cli"
+model = "gpt-5"
+api_key_env = ""
 
 [memory]
 decay_rate = 0.05
@@ -2110,6 +2116,16 @@ decay_rate = 0.05
     ];
 
     let mut any_key_set = false;
+    let codex_cli_available = is_codex_cli_available();
+    if !json {
+        ui::provider_status("Codex CLI", "desktop auth", codex_cli_available);
+    }
+    checks.push(serde_json::json!({
+        "check": "provider",
+        "name": "Codex CLI",
+        "env_var": "",
+        "status": if codex_cli_available { "ok" } else { "warn" }
+    }));
     for (env_var, name, provider_id) in &provider_keys {
         let set = std::env::var(env_var).is_ok();
         if set {
@@ -2132,12 +2148,13 @@ decay_rate = 0.05
         }
     }
 
-    if !any_key_set {
+    if !any_key_set && !codex_cli_available {
         if !json {
             println!();
-            ui::check_fail("No LLM provider API keys found!");
+            ui::check_fail("No Codex CLI auth or LLM provider API keys found!");
             ui::blank();
-            ui::section("Getting an API key (free tiers)");
+            ui::section("Getting a provider working");
+            ui::suggest_cmd("Codex CLI:", "codex login");
             ui::suggest_cmd("Groq:", "https://console.groq.com       (free, fast)");
             ui::suggest_cmd("Gemini:", "https://aistudio.google.com    (free tier)");
             ui::suggest_cmd("DeepSeek:", "https://platform.deepseek.com  (low cost)");
@@ -3843,6 +3860,16 @@ pub(crate) fn start_daemon_background() -> Result<String, String> {
     }
 
     Err("Daemon did not become ready within 10 seconds".to_string())
+}
+
+pub(crate) fn is_codex_cli_available() -> bool {
+    std::process::Command::new("codex")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -5674,5 +5701,14 @@ args = ["-y", "@modelcontextprotocol/server-github"]
             HookEvent::AgentLoopEnd,
         ];
         assert_eq!(events.len(), 4);
+    }
+
+    #[test]
+    fn test_provider_list_prefers_codex_cli() {
+        let providers = crate::provider_list();
+        let first = providers.first().expect("provider list");
+        assert_eq!(first.0, "codex-cli");
+        assert_eq!(first.1, "");
+        assert_eq!(first.2, "gpt-5");
     }
 }

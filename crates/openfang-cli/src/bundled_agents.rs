@@ -19,6 +19,10 @@ pub fn bundled_agents() -> Vec<(&'static str, &'static str)> {
             "assistant",
             include_str!("../../../agents/assistant/agent.toml"),
         ),
+        (
+            "backend-architect",
+            include_str!("../../../agents/backend-architect/agent.toml"),
+        ),
         ("coder", include_str!("../../../agents/coder/agent.toml")),
         (
             "code-reviewer",
@@ -49,6 +53,10 @@ pub fn bundled_agents() -> Vec<(&'static str, &'static str)> {
             include_str!("../../../agents/email-assistant/agent.toml"),
         ),
         (
+            "frontend-developer",
+            include_str!("../../../agents/frontend-developer/agent.toml"),
+        ),
+        (
             "health-tracker",
             include_str!("../../../agents/health-tracker/agent.toml"),
         ),
@@ -68,6 +76,10 @@ pub fn bundled_agents() -> Vec<(&'static str, &'static str)> {
             "meeting-assistant",
             include_str!("../../../agents/meeting-assistant/agent.toml"),
         ),
+        (
+            "devops-automator",
+            include_str!("../../../agents/devops-automator/agent.toml"),
+        ),
         ("ops", include_str!("../../../agents/ops/agent.toml")),
         (
             "orchestrator",
@@ -86,8 +98,16 @@ pub fn bundled_agents() -> Vec<(&'static str, &'static str)> {
             include_str!("../../../agents/recruiter/agent.toml"),
         ),
         (
+            "reality-checker",
+            include_str!("../../../agents/reality-checker/agent.toml"),
+        ),
+        (
             "researcher",
             include_str!("../../../agents/researcher/agent.toml"),
+        ),
+        (
+            "requirements-analyst",
+            include_str!("../../../agents/requirements-analyst/agent.toml"),
         ),
         (
             "rlm-analyst",

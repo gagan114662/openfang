@@ -102,6 +102,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
               <span class="nav-label">Scheduler</span>
             </a>
+            <a class="nav-item" :class="{ active: page === 'simulations' }" @click="navigate('simulations')" :aria-current="page === 'simulations' ? 'page' : false">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" stroke-dasharray="4 2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg></span>
+              <span class="nav-label">Simulations</span>
+            </a>
           </div>
         </template>
       </div>
@@ -1706,6 +1710,139 @@
             </div>
           </div>
 
+        </div>
+      </div>
+    </template>
+
+    <!-- Page: Simulations (MiroFish) -->
+    <template x-if="page === 'simulations'">
+      <div x-data="simulationsPage()">
+        <div class="page-header">
+          <h2>Simulations <span class="badge" :class="connected ? 'badge-success' : 'badge-dim'" x-text="connected ? 'Connected' : 'Disconnected'"></span></h2>
+        </div>
+        <div class="tabs" role="tablist">
+          <div class="tab" :class="{ active: tab === 'status' }" @click="tab = 'status'">Status</div>
+          <div class="tab" :class="{ active: tab === 'graph' }" @click="tab = 'graph'">Build Graph</div>
+          <div class="tab" :class="{ active: tab === 'simulate' }" @click="tab = 'simulate'">Run Simulation</div>
+          <div class="tab" :class="{ active: tab === 'interview' }" @click="tab = 'interview'">Interview</div>
+          <div class="tab" :class="{ active: tab === 'report' }" @click="tab = 'report'">Reports</div>
+        </div>
+        <div class="page-body" x-init="checkHealth()">
+          <div x-show="tab === 'status'">
+            <div class="card mb-4">
+              <div class="font-bold mb-2">MiroFish Connection</div>
+              <div class="flex gap-4 items-center">
+                <span class="badge" :class="connected ? 'badge-success' : 'badge-danger'" x-text="connected ? 'Reachable' : 'Unreachable'"></span>
+                <span class="text-dim text-sm" x-text="'Base URL: ' + baseUrl"></span>
+                <span class="text-dim text-sm" x-show="version" x-text="'Version: ' + version"></span>
+                <button class="btn btn-ghost btn-sm" @click="checkHealth()">Refresh</button>
+              </div>
+            </div>
+            <div class="card" x-show="!connected">
+              <div class="text-dim">MiroFish is not reachable. Make sure it is running and <code>[mirofish]</code> is configured in <code>config.toml</code>:</div>
+              <pre class="mt-2" style="font-size:12px;color:var(--accent)">[mirofish]
+enabled = true
+base_url = "http://localhost:5001"</pre>
+            </div>
+          </div>
+          <div x-show="tab === 'graph'">
+            <div class="card mb-4" style="border-left:3px solid var(--accent)">
+              <div class="font-bold mb-1">Build Knowledge Graph</div>
+              <div class="text-sm text-dim">Seed MiroFish with documents to create a knowledge graph for simulation.</div>
+            </div>
+            <div class="card">
+              <label class="form-label">Project Name</label>
+              <input class="form-input mb-3" x-model="graphForm.project_name" placeholder="my-simulation">
+              <label class="form-label">Seed Documents (one per line)</label>
+              <textarea class="form-input mb-3" rows="6" x-model="graphForm.documents" placeholder="Paste news articles, reports, or other seed data..."></textarea>
+              <button class="btn btn-primary" @click="buildGraph()" :disabled="graphBuilding">
+                <span x-show="!graphBuilding">Build Graph</span>
+                <span x-show="graphBuilding">Building...</span>
+              </button>
+              <div x-show="graphResult" class="mt-3">
+                <div class="badge badge-success">Graph Built</div>
+                <span class="text-sm ml-2">ID: <code x-text="graphResult?.graph_id"></code> | Entities: <span x-text="graphResult?.entity_count"></span></span>
+              </div>
+              <div x-show="graphError" class="mt-3 text-danger text-sm" x-text="graphError"></div>
+            </div>
+          </div>
+          <div x-show="tab === 'simulate'">
+            <div class="card mb-4" style="border-left:3px solid var(--accent)">
+              <div class="font-bold mb-1">Run Simulation</div>
+              <div class="text-sm text-dim">Create and run a swarm-intelligence simulation on a knowledge graph.</div>
+            </div>
+            <div class="card">
+              <label class="form-label">Graph ID</label>
+              <input class="form-input mb-3" x-model="simForm.graph_id" placeholder="graph-id-from-build-step">
+              <label class="form-label">Topic / Question</label>
+              <input class="form-input mb-3" x-model="simForm.topic" placeholder="What will happen if...">
+              <label class="form-label">Rounds (optional)</label>
+              <input class="form-input mb-3" type="number" x-model.number="simForm.rounds" placeholder="Auto">
+              <button class="btn btn-primary" @click="createSimulation()" :disabled="simRunning">
+                <span x-show="!simRunning">Create and Run</span>
+                <span x-show="simRunning">Running...</span>
+              </button>
+              <div x-show="simStatus" class="mt-3">
+                <div class="badge" :class="simStatus?.status === 'completed' ? 'badge-success' : simStatus?.status === 'failed' ? 'badge-danger' : 'badge-warning'" x-text="simStatus?.status || 'unknown'"></div>
+                <span class="text-sm ml-2">ID: <code x-text="simStatus?.id"></code></span>
+                <span class="text-sm ml-2" x-show="simStatus?.agent_count">Agents: <span x-text="simStatus?.agent_count"></span></span>
+              </div>
+              <div x-show="simError" class="mt-3 text-danger text-sm" x-text="simError"></div>
+            </div>
+          </div>
+          <div x-show="tab === 'interview'">
+            <div class="card mb-4" style="border-left:3px solid var(--accent)">
+              <div class="font-bold mb-1">Interview Simulated Agents</div>
+              <div class="text-sm text-dim">Ask questions to agents inside a completed simulation.</div>
+            </div>
+            <div class="card">
+              <label class="form-label">Simulation ID</label>
+              <div class="flex gap-2 mb-3">
+                <input class="form-input" x-model="interviewForm.simulation_id" placeholder="simulation-id">
+                <button class="btn btn-ghost btn-sm" @click="loadAgents()" :disabled="agentsLoading">Load Agents</button>
+              </div>
+              <div x-show="agents.length" class="mb-3">
+                <label class="form-label">Agent</label>
+                <select class="form-input" x-model="interviewForm.agent_name">
+                  <template x-for="a in agents" :key="a.name">
+                    <option :value="a.name" x-text="a.name + (a.agent_type ? ' (' + a.agent_type + ')' : '')"></option>
+                  </template>
+                </select>
+              </div>
+              <label class="form-label">Question</label>
+              <textarea class="form-input mb-3" rows="3" x-model="interviewForm.question" placeholder="What do you think about..."></textarea>
+              <button class="btn btn-primary" @click="interview()" :disabled="interviewing">
+                <span x-show="!interviewing">Ask</span>
+                <span x-show="interviewing">Asking...</span>
+              </button>
+              <div x-show="interviewResult" class="mt-3 card" style="background:var(--bg-deeper)">
+                <div class="font-bold text-sm mb-1" x-text="interviewResult?.agent_name"></div>
+                <div class="text-sm" style="white-space:pre-wrap" x-text="interviewResult?.response"></div>
+              </div>
+              <div x-show="interviewError" class="mt-3 text-danger text-sm" x-text="interviewError"></div>
+            </div>
+          </div>
+          <div x-show="tab === 'report'">
+            <div class="card mb-4" style="border-left:3px solid var(--accent)">
+              <div class="font-bold mb-1">Prediction Reports</div>
+              <div class="text-sm text-dim">Generate reports synthesizing simulation outcomes.</div>
+            </div>
+            <div class="card">
+              <label class="form-label">Simulation ID</label>
+              <input class="form-input mb-3" x-model="reportForm.simulation_id" placeholder="simulation-id">
+              <label class="form-label">Focus Topic (optional)</label>
+              <input class="form-input mb-3" x-model="reportForm.topic" placeholder="Optional focus area">
+              <button class="btn btn-primary" @click="generateReport()" :disabled="reportGenerating">
+                <span x-show="!reportGenerating">Generate Report</span>
+                <span x-show="reportGenerating">Generating...</span>
+              </button>
+              <div x-show="reportResult" class="mt-3 card" style="background:var(--bg-deeper)">
+                <div class="font-bold text-sm mb-1" x-show="reportResult?.topic" x-text="'Topic: ' + reportResult?.topic"></div>
+                <div class="text-sm" style="white-space:pre-wrap" x-text="reportResult?.content"></div>
+              </div>
+              <div x-show="reportError" class="mt-3 text-danger text-sm" x-text="reportError"></div>
+            </div>
+          </div>
         </div>
       </div>
     </template>

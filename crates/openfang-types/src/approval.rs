@@ -177,7 +177,7 @@ pub struct ApprovalPolicy {
 impl Default for ApprovalPolicy {
     fn default() -> Self {
         Self {
-            require_approval: vec!["shell_exec".to_string()],
+            require_approval: vec!["shell_exec".to_string(), "sentry_query".to_string()],
             timeout_secs: 60,
             auto_approve_autonomous: false,
         }
@@ -482,7 +482,10 @@ mod tests {
     fn policy_default_valid() {
         let policy = ApprovalPolicy::default();
         assert!(policy.validate().is_ok());
-        assert_eq!(policy.require_approval, vec!["shell_exec".to_string()]);
+        assert_eq!(
+            policy.require_approval,
+            vec!["shell_exec".to_string(), "sentry_query".to_string()]
+        );
         assert_eq!(policy.timeout_secs, 60);
         assert!(!policy.auto_approve_autonomous);
     }
@@ -492,7 +495,10 @@ mod tests {
         // An empty JSON object should deserialize to defaults via #[serde(default)].
         let policy: ApprovalPolicy = serde_json::from_str("{}").unwrap();
         assert_eq!(policy.timeout_secs, 60);
-        assert_eq!(policy.require_approval, vec!["shell_exec".to_string()]);
+        assert_eq!(
+            policy.require_approval,
+            vec!["shell_exec".to_string(), "sentry_query".to_string()]
+        );
         assert!(!policy.auto_approve_autonomous);
     }
 

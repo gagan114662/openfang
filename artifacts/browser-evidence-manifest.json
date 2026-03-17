@@ -1,0 +1,76 @@
+{
+  "artifacts": [
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/01-diff-summary.png",
+      "sha256": "fb22adaa762c59c1cb8770fac2eabee98311924c04da1bea18d5dbad32fa3c60",
+      "size_bytes": 35999
+    },
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/02-verification-summary.png",
+      "sha256": "0f9f1e3245be407bcee1eb89a73f8ec16463e8b9046e5fe594b0d26773155138",
+      "size_bytes": 23462
+    },
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/03-checklist-preview.png",
+      "sha256": "33c3f8905f3d6e193e886099f8cdd0b666c471a2be3cc3c4269caddf335571dc",
+      "size_bytes": 32678
+    },
+    {
+      "kind": "video",
+      "path": "pr-review/evidence/00-implementation-walkthrough.mp4",
+      "sha256": "b530e23ed28dfa1f19e5052a46378646a76e1d8bf1206413229b9a7b21086a09",
+      "size_bytes": 115187
+    },
+    {
+      "kind": "log",
+      "path": "context/changed_files.txt",
+      "sha256": "5595dbc837f2fe237e4a081fa5482320ed9827aa9b51442bfd1af21fe1aead2e",
+      "size_bytes": 76
+    }
+  ],
+  "assertions": [
+    {
+      "details": "Core media generated successfully",
+      "name": "evidence_capture_completed",
+      "status": "pass"
+    },
+    {
+      "details": "Captured 3 screenshots",
+      "name": "screenshots_minimum",
+      "status": "pass"
+    },
+    {
+      "details": "Captured walkthrough video",
+      "name": "videos_minimum",
+      "status": "pass"
+    },
+    {
+      "details": "UI impact not detected",
+      "name": "ui_screenshot_evidence",
+      "status": "pass"
+    },
+    {
+      "details": "UI impact not detected",
+      "name": "ui_video_evidence",
+      "status": "pass"
+    }
+  ],
+  "captured_at": "2026-02-28T17:19:51.212706+00:00",
+  "flows": [
+    "diff-summary-capture",
+    "verification-summary-capture",
+    "checklist-preview-capture",
+    "implementation-walkthrough-video"
+  ],
+  "head_sha": "fd39776532ca",
+  "summary": {
+    "logs": 1,
+    "reports": 0,
+    "screenshots": 3,
+    "ui_impact": false,
+    "videos": 1
+  }
+}

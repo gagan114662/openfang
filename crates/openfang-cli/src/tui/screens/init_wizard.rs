@@ -29,6 +29,14 @@ struct ProviderInfo {
 
 const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        name: "codex-cli",
+        display: "Codex CLI",
+        env_var: "",
+        default_model: "gpt-5",
+        needs_key: false,
+        hint: "desktop auth",
+    },
+    ProviderInfo {
         name: "groq",
         display: "Groq",
         env_var: "GROQ_API_KEY",
@@ -287,15 +295,17 @@ impl State {
         self.provider_order.clear();
         let gemini_via_google = std::env::var("GOOGLE_API_KEY").is_ok();
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected =
-                std::env::var(p.env_var).is_ok() || (p.name == "gemini" && gemini_via_google);
+            let detected = (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
+                || (p.name == "gemini" && gemini_via_google)
+                || (p.name == "codex-cli" && crate::is_codex_cli_available());
             if detected {
                 self.provider_order.push(i);
             }
         }
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected =
-                std::env::var(p.env_var).is_ok() || (p.name == "gemini" && gemini_via_google);
+            let detected = (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
+                || (p.name == "gemini" && gemini_via_google)
+                || (p.name == "codex-cli" && crate::is_codex_cli_available());
             if !detected {
                 self.provider_order.push(i);
             }
@@ -334,8 +344,9 @@ impl State {
 
     fn is_provider_detected(&self, prov_idx: usize) -> bool {
         let p = &PROVIDERS[prov_idx];
-        std::env::var(p.env_var).is_ok()
+        (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
             || (p.name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok())
+            || (p.name == "codex-cli" && crate::is_codex_cli_available())
     }
 
     /// Populate model_entries from the catalog for the selected provider.

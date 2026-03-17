@@ -117,8 +117,32 @@ pub async fn build_router(
             "/api/health/detail",
             axum::routing::get(routes::health_detail),
         )
+        .route(
+            "/api/telemetry/structured",
+            axum::routing::post(routes::emit_structured_telemetry),
+        )
+        .route(
+            "/api/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
+        .route(
+            "/ops/guard/report",
+            axum::routing::post(routes::report_ops_guard),
+        )
         .route("/api/status", axum::routing::get(routes::status))
         .route("/api/version", axum::routing::get(routes::version))
+        .route(
+            "/api/data/events",
+            axum::routing::get(routes::get_data_events),
+        )
+        .route(
+            "/api/data/events/export",
+            axum::routing::get(routes::export_data_events),
+        )
+        .route(
+            "/api/data/runs/{run_id}",
+            axum::routing::get(routes::get_data_run),
+        )
         .route(
             "/api/agents",
             axum::routing::get(routes::list_agents).post(routes::spawn_agent),
@@ -551,6 +575,47 @@ pub async fn build_router(
             "/api/a2a/tasks/{id}/status",
             axum::routing::get(routes::a2a_external_task_status),
         )
+        // MiroFish simulation proxy endpoints
+        .route(
+            "/api/mirofish/health",
+            axum::routing::get(routes::mirofish_health),
+        )
+        .route(
+            "/api/mirofish/analyze-folder",
+            axum::routing::post(routes::mirofish_analyze_folder),
+        )
+        .route(
+            "/api/mirofish/graph/build",
+            axum::routing::post(routes::mirofish_graph_build),
+        )
+        .route(
+            "/api/mirofish/graph/{graph_id}/entities",
+            axum::routing::get(routes::mirofish_graph_entities),
+        )
+        .route(
+            "/api/mirofish/simulations",
+            axum::routing::post(routes::mirofish_create_simulation),
+        )
+        .route(
+            "/api/mirofish/simulations/{id}/prepare",
+            axum::routing::post(routes::mirofish_prepare_simulation),
+        )
+        .route(
+            "/api/mirofish/simulations/{id}/run",
+            axum::routing::post(routes::mirofish_run_simulation),
+        )
+        .route(
+            "/api/mirofish/simulations/{id}/status",
+            axum::routing::get(routes::mirofish_simulation_status),
+        )
+        .route(
+            "/api/mirofish/simulations/{id}/interview",
+            axum::routing::post(routes::mirofish_interview),
+        )
+        .route(
+            "/api/mirofish/simulations/{id}/report",
+            axum::routing::post(routes::mirofish_report),
+        )
         // Integration management endpoints
         .route(
             "/api/integrations",
@@ -623,6 +688,7 @@ pub async fn build_router(
         .layer(axum::middleware::from_fn(middleware::security_headers))
         .layer(axum::middleware::from_fn(middleware::request_logging))
         .layer(CompressionLayer::new())
+        .layer(axum::middleware::from_fn(middleware::sentry_transaction))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state.clone());

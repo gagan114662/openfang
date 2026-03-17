@@ -168,7 +168,7 @@ function app() {
       var self = this;
 
       // Hash routing
-      var validPages = ['overview','agents','sessions','approvals','workflows','scheduler','channels','skills','hands','analytics','logs','settings','wizard'];
+      var validPages = ['overview','agents','sessions','approvals','workflows','scheduler','simulations','channels','skills','hands','analytics','logs','settings','wizard'];
       var pageRedirects = {
         'chat': 'agents',
         'templates': 'agents',

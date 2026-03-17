@@ -53,6 +53,12 @@ traces_sample_rate = 1.0            # 1.0 = 100%, 0.1 = 10%
 include_prompts = false             # false = privacy-safe (recommended)
 error_tracking = true               # Enable error capture
 performance_monitoring = true       # Enable performance traces
+attach_stacktrace = false           # Recommended for canonical wide events
+enable_logs = true                  # Enable canonical wide-event capture
+wide_event_attribute_max_bytes = 16384
+wide_event_payload_max_bytes = 524288
+claude_capture_payloads = true
+mcp_capture_payloads = true
 
 # Custom tags (optional)
 [sentry.tags]
@@ -85,7 +91,7 @@ fn initialize_sentry(config: &KernelConfig) -> Option<sentry::ClientInitGuard> {
             environment: Some(config.sentry.environment.clone().into()),
             traces_sample_rate: config.sentry.traces_sample_rate,
             send_default_pii: config.sentry.include_prompts,
-            attach_stacktrace: true,
+            attach_stacktrace: config.sentry.attach_stacktrace,
             ..Default::default()
         },
     ));
@@ -153,6 +159,23 @@ Every Sentry event includes:
 ---
 
 ## 🛡️ **Privacy & Security**
+
+## Native Debug Files
+
+OpenFang now defaults `attach_stacktrace = false` for Sentry message events. This keeps canonical
+wide events such as `api.request` and `runtime.agent_loop.completed` from showing Sentry
+`Processing Error` warnings when local debug files have not been uploaded yet.
+
+If you want native stacktrace symbolication for local or release binaries, upload the matching
+debug files explicitly:
+
+```bash
+./scripts/upload_sentry_debug_files.sh target/debug/openfang
+```
+
+The helper resolves `SENTRY_AUTH_TOKEN` from the environment first, then falls back to
+`sentry.auth_token` in `~/.openfang/config.toml`. Override org/project with `SENTRY_ORG` and
+`SENTRY_PROJECT` when needed.
 
 ### Privacy-Safe Mode (Recommended)
 ```toml
@@ -257,7 +280,28 @@ sentry-tracing = "0.34"
 
 **Enabled in:**
 - `openfang-kernel` (main integration)
-- `openfang-api` (API error tracking)
+- `openfang-api` (canonical API request logs + local telemetry ingestion)
+- `openfang-cli` (`openfang mcp` tool-call visibility for Claude Desktop)
+- `openfang-desktop` (desktop lifecycle and notification forwarding)
+
+## Canonical Event Families
+
+The repo now standardizes these searchable event families:
+
+- `api.request`
+- `runtime.llm_call.completed`
+- `runtime.llm_call.failed`
+- `runtime.agent_loop.completed`
+- `runtime.agent_loop.failed`
+- `claude.session.*`
+- `claude.task.*`
+- `claude.prompt.submitted`
+- `mcp.tool_call.*`
+- `desktop.lifecycle.*`
+- `ops.guard.*`
+- `ops.triage.*`
+- `ops.deploy.*`
+- `auth.*`
 - `openfang-runtime` (agent loop monitoring)
 
 ---

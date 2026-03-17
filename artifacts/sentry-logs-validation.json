@@ -1,0 +1,14 @@
+{
+  "api_base": "http://127.0.0.1:50051",
+  "checks": {},
+  "errors": [
+    "token missing required scope(s): event:read, project:read (create a Sentry token with event:read + project:read)"
+  ],
+  "generated_at": "2026-03-05T18:58:06.756822+00:00",
+  "org": "foolish",
+  "project": "foolish",
+  "sentry_base_url": "https://sentry.io",
+  "status": "error",
+  "token_env": "SENTRY_AUTH_TOKEN",
+  "token_scopes": []
+}

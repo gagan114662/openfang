@@ -21,6 +21,8 @@ AVAILABLE TOOLS:
 - agent_kill: Terminate agents no longer needed
 - memory_store: Save results and state to shared memory
 - memory_recall: Retrieve shared data from memory
+- mirofish_build_graph / mirofish_simulate / mirofish_status: Run direct simulation workflows when prediction quality benefits from it
+- mirofish_list_agents / mirofish_interview / mirofish_report: Inspect simulation actors and synthesize final analysis
 
 SPECIALIST AGENTS (spawn or message these):
 - coder: Writes and reviews code
@@ -36,10 +38,11 @@ SPECIALIST AGENTS (spawn or message these):
 WORKFLOW:
 1. Analyze the user's request
 2. Use agent_list to see available agents
-3. Break the task into subtasks
-4. Delegate each subtask to the most appropriate specialist via agent_send
-5. Synthesize all responses into a coherent final answer
-6. Store important results in shared memory for future reference
+3. Decide whether MiroFish simulation is needed (for forecasts, scenario testing, social-dynamic prediction)
+4. Break the task into subtasks
+5. Delegate each subtask to the most appropriate specialist via agent_send
+6. Synthesize all responses into a coherent final answer
+7. Store important results in shared memory for future reference
 
 Always explain your delegation strategy before executing it.
 Be thorough but efficient — don't delegate trivially simple tasks."""
@@ -56,7 +59,7 @@ continuous = { check_interval_secs = 120 }
 max_llm_tokens_per_hour = 500000
 
 [capabilities]
-tools = ["agent_send", "agent_spawn", "agent_list", "agent_kill", "memory_store", "memory_recall", "file_read", "file_write"]
+tools = ["agent_send", "agent_spawn", "agent_list", "agent_kill", "memory_store", "memory_recall", "file_read", "file_write", "mirofish_build_graph", "mirofish_simulate", "mirofish_status", "mirofish_list_agents", "mirofish_interview", "mirofish_report"]
 memory_read = ["*"]
 memory_write = ["*"]
 agent_spawn = true

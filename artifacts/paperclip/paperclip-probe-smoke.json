@@ -1,0 +1,25 @@
+{
+  "checked_endpoints": {
+    "health": {
+      "duration_ms": 190,
+      "ok": false,
+      "status": 0,
+      "url": "http://127.0.0.1:3100/api/health"
+    }
+  },
+  "company_id": null,
+  "counts": {},
+  "failures": {
+    "health": {
+      "error": "url_error=[Errno 61] Connection refused",
+      "status": 0
+    }
+  },
+  "generated_at": "2026-03-16T16:15:28.368660+00:00",
+  "paperclip_base": "http://127.0.0.1:3100",
+  "request_ids": {
+    "probe_id": "afeca5c751514f4dbffcb6acb70a4ec6"
+  },
+  "status": "error",
+  "summary": "Paperclip probe found failures in: health."
+}

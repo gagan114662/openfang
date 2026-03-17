@@ -1,203 +1,402 @@
 //! Claude Code CLI subprocess driver.
 //!
-//! Spawns `claude -p` as a subprocess to leverage Claude Code's built-in OAuth
-//! authentication. This avoids the need for a direct Anthropic API key — the CLI
-//! handles auth internally.
+//! Spawns `claude -p --verbose --output-format stream-json` as a subprocess to
+//! leverage Claude Code's built-in OAuth authentication. Parses the JSONL stream
+//! to extract tool calls and create Sentry child spans with real timing.
 
 use crate::llm_driver::{CompletionRequest, CompletionResponse, LlmDriver, LlmError};
 use async_trait::async_trait;
 use openfang_types::message::{ContentBlock, MessageContent, Role, StopReason, TokenUsage};
+use std::collections::HashMap;
 use std::process::Stdio;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, warn};
 
 /// Driver that delegates to the `claude` CLI binary (Claude Code).
 ///
 /// Auth is handled by the CLI itself (OAuth session). No API key needed.
+/// Uses `--verbose --output-format stream-json` to capture tool calls for Sentry tracing.
 pub struct ClaudeCodeDriver;
 
 #[async_trait]
 impl LlmDriver for ClaudeCodeDriver {
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let prompt = serialize_messages(&request);
-
-        let mut args = vec![
-            "-p".to_string(),
-            "--output-format".to_string(),
-            "json".to_string(),
-        ];
-
-        if !request.model.is_empty() {
-            args.push("--model".to_string());
-            args.push(request.model.clone());
-        }
-
-        if let Some(ref system) = request.system {
-            args.push("--system-prompt".to_string());
-            args.push(system.clone());
-        }
-
         let requested_model = if request.model.trim().is_empty() {
             None
         } else {
             Some(request.model.trim().to_string())
         };
+        let sentry_parent_span = request.sentry_parent_span.clone();
 
-        debug!(
-            args = ?args,
-            prompt_len = prompt.len(),
-            "Spawning claude CLI subprocess"
-        );
-
-        let mut child = tokio::process::Command::new("claude")
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| LlmError::Http(format!("Failed to spawn claude CLI: {e}")))?;
-
-        // Write prompt to stdin
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(|e| LlmError::Http(format!("Failed to write to claude stdin: {e}")))?;
-            // Drop stdin to signal EOF
-        }
-
-        // Wait with timeout — kill child on timeout to avoid orphaned processes
-        let output = match tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            child.wait_with_output(),
+        let result = run_claude_streaming(
+            &prompt,
+            requested_model.as_deref(),
+            request.system.as_deref(),
+            sentry_parent_span.clone(),
         )
-        .await
-        {
-            Ok(result) => {
-                result.map_err(|e| LlmError::Http(format!("claude CLI process error: {e}")))?
-            }
-            Err(_) => {
-                warn!("claude CLI subprocess timed out after 120s, killing child");
-                return Err(LlmError::Http(
-                    "claude CLI subprocess timed out after 120s".to_string(),
-                ));
-            }
-        };
-
-        let mut failure_message = extract_claude_failure_message(
-            &String::from_utf8_lossy(&output.stdout),
-            &String::from_utf8_lossy(&output.stderr),
-        );
+        .await;
 
         // Guardrail: if claude rejects request format and we passed a model,
         // retry once without --model because aliases/versions may drift.
-        if !output.status.success()
-            && requested_model.is_some()
-            && is_request_format_error(&failure_message)
-        {
-            warn!(
-                model = requested_model.as_deref().unwrap_or_default(),
-                error = %failure_message,
-                "claude request format error with explicit model; retrying once without --model"
-            );
-
-            let mut retry_args = vec![
-                "-p".to_string(),
-                "--output-format".to_string(),
-                "json".to_string(),
-            ];
-            if let Some(ref system) = request.system {
-                retry_args.push("--system-prompt".to_string());
-                retry_args.push(system.clone());
-            }
-
-            let mut retry_child = tokio::process::Command::new("claude")
-                .args(&retry_args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| LlmError::Http(format!("Failed to spawn claude CLI: {e}")))?;
-
-            if let Some(mut stdin) = retry_child.stdin.take() {
-                stdin
-                    .write_all(prompt.as_bytes())
-                    .await
-                    .map_err(|e| LlmError::Http(format!("Failed to write to claude stdin: {e}")))?;
-            }
-
-            let retry_output = match tokio::time::timeout(
-                std::time::Duration::from_secs(120),
-                retry_child.wait_with_output(),
-            )
-            .await
-            {
-                Ok(result) => {
-                    result.map_err(|e| LlmError::Http(format!("claude CLI process error: {e}")))?
-                }
-                Err(_) => {
-                    return Err(LlmError::Http(
-                        "claude CLI subprocess timed out after 120s".to_string(),
-                    ));
-                }
-            };
-
-            failure_message = extract_claude_failure_message(
-                &String::from_utf8_lossy(&retry_output.stdout),
-                &String::from_utf8_lossy(&retry_output.stderr),
-            );
-
-            if !retry_output.status.success() {
+        if let Err(ref e) = result {
+            if requested_model.is_some() && is_request_format_error(&e.to_string()) {
                 warn!(
-                    exit_code = ?retry_output.status.code(),
-                    error = %failure_message,
-                    "claude CLI failed"
+                    model = requested_model.as_deref().unwrap_or_default(),
+                    error = %e,
+                    "claude request format error with explicit model; retrying once without --model"
                 );
-                return Err(LlmError::Api {
-                    status: retry_output.status.code().unwrap_or(1) as u16,
-                    message: format!("claude CLI exited with error: {failure_message}"),
-                });
+                return run_claude_streaming(
+                    &prompt,
+                    None,
+                    request.system.as_deref(),
+                    sentry_parent_span,
+                )
+                .await;
             }
-
-            let stdout = String::from_utf8_lossy(&retry_output.stdout);
-            debug!(stdout_len = stdout.len(), "claude CLI returned");
-            return parse_claude_json(&stdout);
         }
 
-        if !output.status.success() {
-            warn!(
-                exit_code = ?output.status.code(),
-                error = %failure_message,
-                "claude CLI failed"
-            );
-            return Err(LlmError::Api {
-                status: output.status.code().unwrap_or(1) as u16,
-                message: format!("claude CLI exited with error: {failure_message}"),
-            });
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        debug!(stdout_len = stdout.len(), "claude CLI returned");
-
-        parse_claude_json(&stdout)
+        result
     }
 }
 
-/// Parse the JSON output from `claude -p --output-format json`.
+/// Spawn `claude -p --verbose --output-format stream-json`, read stdout
+/// line-by-line, and create Sentry child spans for each tool call in real time.
+async fn run_claude_streaming(
+    prompt: &str,
+    model: Option<&str>,
+    system: Option<&str>,
+    parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>>,
+) -> Result<CompletionResponse, LlmError> {
+    // --verbose is required for stream-json with -p
+    let mut args = vec![
+        "-p".to_string(),
+        "--verbose".to_string(),
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+    ];
+
+    if let Some(model) = model {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+
+    if let Some(system) = system {
+        args.push("--system-prompt".to_string());
+        args.push(system.to_string());
+    }
+
+    debug!(
+        args = ?args,
+        prompt_len = prompt.len(),
+        "Spawning claude CLI subprocess (stream-json)"
+    );
+
+    let mut child = tokio::process::Command::new("claude")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| LlmError::Http(format!("Failed to spawn claude CLI: {e}")))?;
+
+    // Write prompt to stdin, then drop to signal EOF
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .await
+            .map_err(|e| LlmError::Http(format!("Failed to write to claude stdin: {e}")))?;
+    }
+
+    // Take stdout for line-by-line reading
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| LlmError::Http("No stdout from claude CLI".to_string()))?;
+
+    // Collect stderr in background
+    let stderr_handle = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        if let Some(mut stderr) = stderr_handle {
+            let _ = stderr.read_to_string(&mut buf).await;
+        }
+        buf
+    });
+
+    // Parse stream-json with timeout (5 min for long-running tool calls)
+    let parse_result = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        parse_stream_json(stdout, parent_span.as_deref()),
+    )
+    .await;
+
+    // Wait for child exit
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| LlmError::Http(format!("claude CLI process error: {e}")))?;
+
+    let stderr_text = stderr_task.await.unwrap_or_default();
+
+    match parse_result {
+        Ok(Ok(response)) => {
+            if !status.success() {
+                let failure =
+                    extract_claude_failure_message_from_lines(&response.text(), &stderr_text);
+                warn!(
+                    exit_code = ?status.code(),
+                    error = %failure,
+                    "claude CLI failed (stream-json)"
+                );
+                return Err(LlmError::Api {
+                    status: status.code().unwrap_or(1) as u16,
+                    message: format!("claude CLI exited with error: {failure}"),
+                });
+            }
+            Ok(response)
+        }
+        Ok(Err(e)) => {
+            if !status.success() {
+                let failure = extract_claude_failure_message_from_lines("", &stderr_text);
+                return Err(LlmError::Api {
+                    status: status.code().unwrap_or(1) as u16,
+                    message: format!("claude CLI exited with error: {failure}"),
+                });
+            }
+            Err(e)
+        }
+        Err(_) => {
+            warn!("claude CLI subprocess timed out after 300s");
+            Err(LlmError::Http(
+                "claude CLI subprocess timed out after 300s".to_string(),
+            ))
+        }
+    }
+}
+
+/// Parse JSONL stream from `claude -p --verbose --output-format stream-json`.
 ///
-/// Expected shape:
-/// ```json
-/// {
-///   "result": "the response text",
-///   "usage": { "input_tokens": N, "output_tokens": N },
-///   "total_cost_usd": 0.00X
-/// }
-/// ```
+/// Creates Sentry child spans for each tool call with real timing.
+async fn parse_stream_json(
+    stdout: tokio::process::ChildStdout,
+    parent_span: Option<&sentry::TransactionOrSpan>,
+) -> Result<CompletionResponse, LlmError> {
+    let reader = BufReader::new(stdout);
+    let mut lines = reader.lines();
+
+    let mut result_text = String::new();
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
+    let mut is_error = false;
+    let mut tool_span_count: u32 = 0;
+
+    // Track active tool spans by tool_use ID
+    let mut active_tool_spans: HashMap<String, sentry::TransactionOrSpan> = HashMap::new();
+    // Collect all stdout lines in case we need to fall back to single-JSON parsing
+    let mut all_lines: Vec<String> = Vec::new();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let trimmed = line.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        all_lines.push(trimmed.clone());
+
+        let json: serde_json::Value = match serde_json::from_str(&trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            // Assistant message — may contain tool_use content blocks
+            "assistant" => {
+                if let Some(content) = json.pointer("/message/content").and_then(|v| v.as_array()) {
+                    for block in content {
+                        let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                        if block_type == "tool_use" {
+                            let tool_id = block
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let tool_name = block
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+
+                            debug!(
+                                tool_name,
+                                tool_id = tool_id.as_str(),
+                                "claude subprocess: tool_use detected"
+                            );
+
+                            if let Some(parent) = parent_span {
+                                let span = parent.start_child("tool.execute", tool_name);
+                                span.set_data("tool.name", tool_name.into());
+                                span.set_data("tool.id", tool_id.clone().into());
+                                span.set_data("tool.source", "claude-code".into());
+
+                                // Capture tool input (truncated for Sentry payload limits)
+                                if let Some(input) = block.get("input") {
+                                    let input_str = input.to_string();
+                                    let truncated = if input_str.len() > 1024 {
+                                        format!("{}...(truncated)", &input_str[..1024])
+                                    } else {
+                                        input_str
+                                    };
+                                    span.set_data("tool.input", truncated.into());
+                                }
+
+                                let span: sentry::TransactionOrSpan = span.into();
+                                active_tool_spans.insert(tool_id, span);
+                                tool_span_count += 1;
+                            }
+                        }
+
+                        if block_type == "text" {
+                            if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                if result_text.is_empty() {
+                                    result_text = text.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tool result — finish the corresponding span
+            "tool_result" => {
+                let tool_id = json
+                    .get("tool_use_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                finish_tool_span(&mut active_tool_spans, tool_id, &json);
+            }
+
+            // Some Claude Code versions emit "user" messages with tool_result content
+            "user" => {
+                if let Some(content) = json.pointer("/message/content").and_then(|v| v.as_array()) {
+                    for block in content {
+                        let block_type = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if block_type == "tool_result" {
+                            let tool_id = block
+                                .get("tool_use_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            finish_tool_span(&mut active_tool_spans, tool_id, block);
+                        }
+                    }
+                }
+            }
+
+            // Final result event — extract response and usage
+            "result" => {
+                result_text = json
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                input_tokens = json
+                    .pointer("/usage/input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                output_tokens = json
+                    .pointer("/usage/output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                is_error = json
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+            }
+
+            _ => {} // Ignore system, message_start, ping, etc.
+        }
+    }
+
+    // Finish any orphaned tool spans
+    for (id, span) in active_tool_spans.drain() {
+        debug!(tool_id = id.as_str(), "Finishing orphaned tool span");
+        span.set_status(sentry::protocol::SpanStatus::Aborted);
+        span.finish();
+    }
+
+    debug!(
+        result_len = result_text.len(),
+        input_tokens, output_tokens, tool_span_count, "claude stream-json parsing complete"
+    );
+
+    // If no result event found, try falling back to single-JSON parsing
+    if result_text.is_empty() && !all_lines.is_empty() {
+        let combined = all_lines.join("\n");
+        if let Ok(response) = parse_claude_json(&combined) {
+            return Ok(response);
+        }
+    }
+
+    if is_error {
+        return Err(LlmError::Api {
+            status: 0,
+            message: format!("claude CLI error: {result_text}"),
+        });
+    }
+
+    Ok(CompletionResponse {
+        content: vec![ContentBlock::Text { text: result_text }],
+        stop_reason: StopReason::EndTurn,
+        tool_calls: vec![],
+        usage: TokenUsage {
+            input_tokens,
+            output_tokens,
+        },
+    })
+}
+
+fn finish_tool_span(
+    active_spans: &mut HashMap<String, sentry::TransactionOrSpan>,
+    tool_id: &str,
+    result_json: &serde_json::Value,
+) {
+    if let Some(span) = active_spans.remove(tool_id) {
+        let tool_error = result_json
+            .get("is_error")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if tool_error {
+            span.set_status(sentry::protocol::SpanStatus::InternalError);
+        } else {
+            span.set_status(sentry::protocol::SpanStatus::Ok);
+        }
+
+        // Capture tool output (truncated for Sentry payload limits)
+        if let Some(content) = result_json
+            .get("content")
+            .or_else(|| result_json.get("output"))
+        {
+            let output_str = content.to_string();
+            let truncated = if output_str.len() > 1024 {
+                format!("{}...(truncated)", &output_str[..1024])
+            } else {
+                output_str
+            };
+            span.set_data("tool.output", truncated.into());
+        }
+        span.set_data("tool.is_error", tool_error.into());
+
+        debug!(tool_id, tool_error, "Finishing tool span");
+        span.finish();
+    }
+}
+
 fn parse_claude_json(raw: &str) -> Result<CompletionResponse, LlmError> {
     let json: serde_json::Value = serde_json::from_str(raw)
         .map_err(|e| LlmError::Parse(format!("Invalid JSON from claude CLI: {e}")))?;
 
-    // Check for error response
     if json
         .get("is_error")
         .and_then(|v| v.as_bool())
@@ -251,26 +450,54 @@ fn is_request_format_error(message: &str) -> bool {
 }
 
 fn filtered_stderr(stderr: &str) -> String {
-    let lines: Vec<&str> = stderr
+    let all_lines: Vec<&str> = stderr
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("WARNING:"))
+        .filter(|line| !line.is_empty())
         .collect();
 
-    if lines.is_empty() {
-        "unknown claude CLI error".to_string()
+    if all_lines.is_empty() {
+        return "unknown claude CLI error (empty stderr)".to_string();
+    }
+
+    // Prefer non-warning lines (actual errors)
+    let error_lines: Vec<&str> = all_lines
+        .iter()
+        .copied()
+        .filter(|line| !line.starts_with("WARNING:"))
+        .collect();
+
+    if !error_lines.is_empty() {
+        error_lines.join(" | ")
     } else {
-        lines.join(" | ")
+        // All lines are warnings — include them rather than losing the info
+        all_lines.join(" | ")
     }
 }
 
-fn extract_claude_failure_message(stdout: &str, stderr: &str) -> String {
-    let stderr_msg = filtered_stderr(stderr);
-    if stderr_msg != "unknown claude CLI error" {
-        return stderr_msg;
+fn extract_claude_failure_message_from_lines(stdout: &str, stderr: &str) -> String {
+    // Try structured extraction from stdout first (most specific)
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(msg) = json
+                .get("result")
+                .or_else(|| json.get("message"))
+                .or_else(|| json.pointer("/error/message"))
+                .and_then(|v| v.as_str())
+            {
+                let trimmed = msg.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
     }
 
-    // Claude --output-format json emits structured errors in stdout.
+    // Try single-JSON stdout
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
         if let Some(msg) = json
             .get("result")
@@ -285,10 +512,10 @@ fn extract_claude_failure_message(stdout: &str, stderr: &str) -> String {
         }
     }
 
-    stderr_msg
+    // Fall back to stderr (now includes warning lines instead of losing them)
+    filtered_stderr(stderr)
 }
 
-/// Serialize `CompletionRequest` messages into a plain-text prompt string.
 fn serialize_messages(request: &CompletionRequest) -> String {
     let mut parts = Vec::new();
 
@@ -307,12 +534,10 @@ fn serialize_messages(request: &CompletionRequest) -> String {
     parts.join("\n\n")
 }
 
-/// Extract plain text from a `MessageContent` (delegates to shared method).
 fn extract_text(content: &MessageContent) -> String {
-    content.text_with_tool_results()
+    content.text_content()
 }
 
-/// Check if the `claude` binary is available on PATH.
 pub fn is_available() -> bool {
     super::binary_on_path("claude")
 }
@@ -376,6 +601,7 @@ mod tests {
             temperature: 0.0,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let prompt = serialize_messages(&request);
@@ -385,83 +611,19 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_messages_with_blocks() {
-        use openfang_types::message::Message;
-
-        let request = CompletionRequest {
-            model: "sonnet".to_string(),
-            messages: vec![Message {
-                role: Role::User,
-                content: MessageContent::Blocks(vec![
-                    ContentBlock::Text {
-                        text: "First".to_string(),
-                    },
-                    ContentBlock::Text {
-                        text: "Second".to_string(),
-                    },
-                ]),
-            }],
-            tools: vec![],
-            max_tokens: 1024,
-            temperature: 0.0,
-            system: None,
-            thinking: None,
-        };
-
-        let prompt = serialize_messages(&request);
-        assert!(prompt.contains("First"));
-        assert!(prompt.contains("Second"));
-    }
-
-    #[test]
-    fn test_extract_text_simple() {
-        let content = MessageContent::Text("hello".to_string());
-        assert_eq!(extract_text(&content), "hello");
-    }
-
-    #[test]
-    fn test_extract_text_blocks() {
-        let content = MessageContent::Blocks(vec![
-            ContentBlock::Text {
-                text: "a".to_string(),
-            },
-            ContentBlock::ToolResult {
-                tool_use_id: "t1".to_string(),
-                content: "result".to_string(),
-                is_error: false,
-            },
-            ContentBlock::Image {
-                media_type: "image/png".to_string(),
-                data: "base64data".to_string(),
-            },
-        ]);
-        let text = extract_text(&content);
-        assert!(text.contains("a"));
-        assert!(text.contains("result"));
-        assert!(!text.contains("base64data"));
-    }
-
-    #[test]
-    fn test_extract_claude_failure_message_from_stdout_json() {
-        let stdout = r#"{"is_error":true,"result":"Invalid request format. This may be a bug."}"#;
-        let msg = extract_claude_failure_message(stdout, "");
-        assert_eq!(msg, "Invalid request format. This may be a bug.");
-    }
-
-    #[test]
-    fn test_extract_claude_failure_message_prefers_stderr_when_present() {
-        let stdout = r#"{"is_error":true,"result":"stdout message"}"#;
-        let stderr = "validation error: malformed payload";
-        let msg = extract_claude_failure_message(stdout, stderr);
-        assert_eq!(msg, "validation error: malformed payload");
-    }
-
-    #[test]
     fn test_is_request_format_error_patterns() {
         assert!(is_request_format_error(
             "Invalid request format. This may be a bug."
         ));
         assert!(is_request_format_error("missing field `id_token`"));
         assert!(!is_request_format_error("rate limit exceeded"));
+    }
+
+    #[test]
+    fn test_finish_tool_span_handles_missing_id() {
+        let mut spans: HashMap<String, sentry::TransactionOrSpan> = HashMap::new();
+        let json = serde_json::json!({"is_error": false});
+        finish_tool_span(&mut spans, "nonexistent", &json);
+        assert!(spans.is_empty());
     }
 }

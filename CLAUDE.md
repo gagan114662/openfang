@@ -6,6 +6,32 @@ OpenFang is an open-source Agent Operating System written in Rust (14 crates).
 - Default API: `http://127.0.0.1:4200`
 - CLI binary: `target/release/openfang.exe` (or `target/debug/openfang.exe`)
 
+## Claude Desktop Workflow
+- Repo-local MCP config lives in `.mcp.json` and exposes:
+  - `openfang` via `cargo run --quiet -p openfang-cli -- mcp`
+  - `contextplus` for local semantic context
+- Repo-local Claude hooks live in `.claude/settings.json` and wrap `entire` through `scripts/claude/claude_hook.py`.
+- Canonical Claude lifecycle events are emitted as:
+  - `claude.session.started`
+  - `claude.session.ended`
+  - `claude.session.stopped`
+  - `claude.task.started`
+  - `claude.task.completed`
+  - `claude.task.failed`
+  - `claude.prompt.submitted`
+- MCP tool calls from Claude Desktop are observable as:
+  - `mcp.tool_call.started`
+  - `mcp.tool_call.completed`
+  - `mcp.tool_call.failed`
+
+## Sentry Queries
+- API heartbeat: `event.kind:api.request`
+- Agent loops: `event.kind:runtime.agent_loop.completed OR event.kind:runtime.agent_loop.failed`
+- LLM calls: `event.kind:runtime.llm_call.completed OR event.kind:runtime.llm_call.failed`
+- Claude hooks: `event.kind:claude.*`
+- Claude Desktop MCP: `event.kind:mcp.tool_call.*`
+- Desktop app lifecycle: `event.kind:desktop.lifecycle.*`
+
 ## Build & Verify Workflow
 After every feature implementation, run ALL THREE checks:
 ```bash

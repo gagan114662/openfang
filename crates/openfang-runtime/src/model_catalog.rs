@@ -385,6 +385,15 @@ fn builtin_providers() -> Vec<ProviderInfo> {
             auth_status: AuthStatus::Missing,
             model_count: 0,
         },
+        ProviderInfo {
+            id: "codex-cli".into(),
+            display_name: "Codex CLI".into(),
+            api_key_env: String::new(),
+            base_url: String::new(),
+            key_required: false,
+            auth_status: AuthStatus::NotRequired,
+            model_count: 0,
+        },
         // ── Chinese providers (5) ────────────────────────────────────
         ProviderInfo {
             id: "qwen".into(),
@@ -1924,6 +1933,23 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec!["copilot-gpt4".into()],
         },
         // ══════════════════════════════════════════════════════════════
+        // Codex CLI (1) — desktop-auth backed
+        // ══════════════════════════════════════════════════════════════
+        ModelCatalogEntry {
+            id: "gpt-5".into(),
+            display_name: "GPT-5".into(),
+            provider: "codex-cli".into(),
+            tier: ModelTier::Frontier,
+            context_window: 400_000,
+            max_output_tokens: 128_000,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: true,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        // ══════════════════════════════════════════════════════════════
         // Qwen / Alibaba (6)
         // ══════════════════════════════════════════════════════════════
         ModelCatalogEntry {
@@ -2307,7 +2333,7 @@ mod tests {
     #[test]
     fn test_catalog_has_providers() {
         let catalog = ModelCatalog::new();
-        assert_eq!(catalog.list_providers().len(), 27);
+        assert_eq!(catalog.list_providers().len(), 28);
     }
 
     #[test]
@@ -2395,11 +2421,13 @@ mod tests {
     fn test_detect_auth_local_providers() {
         let mut catalog = ModelCatalog::new();
         catalog.detect_auth();
-        // Local providers should be NotRequired
+        // Local and CLI-auth providers should be NotRequired
         let ollama = catalog.get_provider("ollama").unwrap();
         assert_eq!(ollama.auth_status, AuthStatus::NotRequired);
         let vllm = catalog.get_provider("vllm").unwrap();
         assert_eq!(vllm.auth_status, AuthStatus::NotRequired);
+        let codex = catalog.get_provider("codex-cli").unwrap();
+        assert_eq!(codex.auth_status, AuthStatus::NotRequired);
     }
 
     #[test]
@@ -2442,6 +2470,7 @@ mod tests {
     #[test]
     fn test_new_providers_in_catalog() {
         let catalog = ModelCatalog::new();
+        assert!(catalog.get_provider("codex-cli").is_some());
         assert!(catalog.get_provider("perplexity").is_some());
         assert!(catalog.get_provider("cohere").is_some());
         assert!(catalog.get_provider("ai21").is_some());
@@ -2461,6 +2490,15 @@ mod tests {
         assert!(xai.iter().any(|m| m.id == "grok-2-mini"));
         assert!(xai.iter().any(|m| m.id == "grok-3"));
         assert!(xai.iter().any(|m| m.id == "grok-3-mini"));
+    }
+
+    #[test]
+    fn test_codex_cli_models() {
+        let catalog = ModelCatalog::new();
+        let codex = catalog.models_by_provider("codex-cli");
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].id, "gpt-5");
+        assert_eq!(codex[0].tier, ModelTier::Frontier);
     }
 
     #[test]

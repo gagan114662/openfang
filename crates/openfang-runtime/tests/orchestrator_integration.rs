@@ -37,6 +37,7 @@ fn test_orchestrator_routing() {
         temperature: 0.7,
         system: None,
         thinking: None,
+        sentry_parent_span: None,
     };
 
     let task_type = orchestrator.classify_task(&research_request);

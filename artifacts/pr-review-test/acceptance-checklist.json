@@ -1,0 +1,114 @@
+{
+  "active_criteria_count": 8,
+  "all_passed": false,
+  "criteria": [
+    {
+      "details": "2 changed files within maxFiles=200",
+      "id": "diff_scoped_coherent",
+      "passed": true,
+      "title": "Diff is scoped and coherent"
+    },
+    {
+      "details": "no non-harness required CI checks declared for this risk tier",
+      "id": "required_ci_signals_green",
+      "passed": true,
+      "title": "Required CI signals are green"
+    },
+    {
+      "details": "manifest contains 5 artifacts",
+      "id": "evidence_package_exists",
+      "passed": true,
+      "title": "Evidence package exists"
+    },
+    {
+      "details": "3 screenshots >= required 2",
+      "id": "minimum_screenshots",
+      "passed": true,
+      "title": "At least 2 screenshots captured"
+    },
+    {
+      "details": "1 videos >= required 1",
+      "id": "minimum_videos",
+      "passed": true,
+      "title": "At least 1 video captured"
+    },
+    {
+      "details": "risk gate decision: unknown",
+      "id": "no_harness_policy_violations",
+      "passed": false,
+      "title": "No harness policy violations"
+    },
+    {
+      "details": "agent-evals-pr not required for this risk tier",
+      "id": "agent_blocking_evals_pass",
+      "passed": true,
+      "title": "Agent blocking evals pass"
+    },
+    {
+      "details": "required checks missing for API/runtime scope: ci-check, ci-test",
+      "id": "api_runtime_validation_present",
+      "passed": false,
+      "title": "api_runtime_validation_present"
+    }
+  ],
+  "evidence_inventory": [
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/01-diff-summary.png",
+      "sha256": "fb22adaa762c59c1cb8770fac2eabee98311924c04da1bea18d5dbad32fa3c60",
+      "size_bytes": 35999
+    },
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/02-verification-summary.png",
+      "sha256": "0f9f1e3245be407bcee1eb89a73f8ec16463e8b9046e5fe594b0d26773155138",
+      "size_bytes": 23462
+    },
+    {
+      "kind": "screenshot",
+      "path": "pr-review/evidence/03-checklist-preview.png",
+      "sha256": "33c3f8905f3d6e193e886099f8cdd0b666c471a2be3cc3c4269caddf335571dc",
+      "size_bytes": 32678
+    },
+    {
+      "kind": "video",
+      "path": "pr-review/evidence/00-implementation-walkthrough.mp4",
+      "sha256": "b530e23ed28dfa1f19e5052a46378646a76e1d8bf1206413229b9a7b21086a09",
+      "size_bytes": 115187
+    },
+    {
+      "kind": "log",
+      "path": "context/changed_files.txt",
+      "sha256": "5595dbc837f2fe237e4a081fa5482320ed9827aa9b51442bfd1af21fe1aead2e",
+      "size_bytes": 76
+    }
+  ],
+  "generated_at": "2026-03-01T17:03:18.534205+00:00",
+  "head_sha": "local-dev-sha",
+  "pr_number": 1,
+  "review_providers": {
+    "agent_evals": {
+      "check_run_conclusion": "n/a",
+      "check_run_name": "agent-evals-pr",
+      "check_run_status": "missing",
+      "check_run_url": "",
+      "summary": {
+        "all_blocking_passed": true,
+        "blocking_threshold": 1.0,
+        "failed": 0,
+        "failure_classes": {},
+        "pass_rate": 1.0,
+        "passed": 34,
+        "total": 34
+      }
+    },
+    "greptile": {
+      "check_run_conclusion": "n/a",
+      "check_run_name": "greptile-review",
+      "check_run_status": "missing",
+      "check_run_url": "",
+      "report_status": "missing"
+    },
+    "primary": "greptile"
+  }
+}

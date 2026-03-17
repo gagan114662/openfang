@@ -147,6 +147,23 @@ The app subscribes to the kernel's event bus and forwards critical events as nat
 
 All other events are silently skipped. The notification listener runs as an async task spawned via `tauri::async_runtime::spawn` and handles broadcast lag gracefully (logs a warning and continues).
 
+## Sentry Coverage
+
+Desktop builds share the same Sentry project and wide-event schema as the daemon path.
+
+Canonical desktop events:
+- `desktop.lifecycle.server_ready`
+- `desktop.lifecycle.started`
+- `desktop.lifecycle.notification_forwarded`
+- `desktop.lifecycle.notification_failed`
+- `desktop.lifecycle.shutdown_requested`
+- `desktop.lifecycle.stopped`
+
+Useful checks:
+- `event.kind:desktop.lifecycle.*`
+- `event.kind:api.request`
+- `event.kind:runtime.agent_loop.completed OR event.kind:runtime.agent_loop.failed`
+
 ---
 
 ## IPC Commands

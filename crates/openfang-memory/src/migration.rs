@@ -5,7 +5,7 @@
 use rusqlite::Connection;
 
 /// Current schema version.
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 /// Run all migrations to bring the database up to date.
 pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -37,6 +37,10 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     if current_version < 7 {
         migrate_v7(conn)?;
+    }
+
+    if current_version < 8 {
+        migrate_v8(conn)?;
     }
 
     set_schema_version(conn, SCHEMA_VERSION)?;
@@ -299,6 +303,55 @@ fn migrate_v7(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// Version 8: Add canonical fact and artifact index tables.
+fn migrate_v8(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS fact_events (
+            event_id TEXT PRIMARY KEY,
+            occurred_at TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            agent_id TEXT,
+            run_id TEXT,
+            session_id TEXT,
+            request_id TEXT,
+            trace_id TEXT,
+            outcome TEXT,
+            event_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_fact_events_occurred_at ON fact_events(occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_kind ON fact_events(event_kind);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_agent ON fact_events(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_run ON fact_events(run_id);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_session ON fact_events(session_id);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_request ON fact_events(request_id);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_trace ON fact_events(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_fact_events_outcome ON fact_events(outcome);
+
+        CREATE TABLE IF NOT EXISTS artifact_index (
+            artifact_id TEXT PRIMARY KEY,
+            run_id TEXT,
+            session_id TEXT,
+            agent_id TEXT,
+            artifact_kind TEXT NOT NULL,
+            storage_path TEXT NOT NULL,
+            content_type TEXT,
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_artifact_index_run ON artifact_index(run_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_index_session ON artifact_index(session_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_index_agent ON artifact_index(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_artifact_index_kind ON artifact_index(artifact_kind);
+        CREATE INDEX IF NOT EXISTS idx_artifact_index_created_at ON artifact_index(created_at);
+
+        INSERT OR IGNORE INTO migrations (version, applied_at, description)
+        VALUES (8, datetime('now'), 'Add fact_events and artifact_index tables');
+        ",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +376,8 @@ mod tests {
         assert!(tables.contains(&"memories".to_string()));
         assert!(tables.contains(&"entities".to_string()));
         assert!(tables.contains(&"relations".to_string()));
+        assert!(tables.contains(&"fact_events".to_string()));
+        assert!(tables.contains(&"artifact_index".to_string()));
     }
 
     #[test]

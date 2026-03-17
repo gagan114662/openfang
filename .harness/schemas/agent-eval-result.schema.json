@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openfang.dev/schemas/agent-eval-result.schema.json",
+  "title": "AgentEvalResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "head_sha",
+    "profile",
+    "seed",
+    "generated_at",
+    "summary",
+    "results"
+  ],
+  "properties": {
+    "head_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["blocking", "nightly"]
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "passed",
+        "failed",
+        "pass_rate",
+        "blocking_threshold",
+        "all_blocking_passed",
+        "failure_classes"
+      ],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "blocking_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "all_blocking_passed": {"type": "boolean"},
+        "failure_classes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scenario_id",
+          "seed",
+          "surface",
+          "failure_class",
+          "pass",
+          "duration_ms",
+          "observed",
+          "expected",
+          "failure_reason",
+          "artifacts",
+          "deterministic_hash"
+        ],
+        "properties": {
+          "scenario_id": {"type": "string"},
+          "seed": {"type": "integer"},
+          "surface": {"type": "string"},
+          "failure_class": {"type": "string"},
+          "pass": {"type": "boolean"},
+          "duration_ms": {"type": "integer", "minimum": 0},
+          "observed": {"type": "string"},
+          "expected": {"type": "string"},
+          "failure_reason": {"type": "string"},
+          "artifacts": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "remediable": {"type": "boolean"},
+          "owner": {"type": "string"},
+          "deterministic_hash": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

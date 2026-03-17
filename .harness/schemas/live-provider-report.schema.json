@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openfang.dev/schemas/live-provider-report.schema.json",
+  "title": "LiveProviderReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "head_sha",
+    "risk_tier",
+    "status",
+    "blocking_applies",
+    "min_successful_providers",
+    "detected_providers",
+    "successful_providers",
+    "providers",
+    "generated_at",
+    "errors"
+  ],
+  "properties": {
+    "head_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "risk_tier": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "advisory", "missing", "error"]
+    },
+    "blocking_applies": {
+      "type": "boolean"
+    },
+    "min_successful_providers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "detected_providers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "successful_providers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "enabled", "status", "http_status", "classification", "detail", "attempts_used"],
+        "properties": {
+          "name": {"type": "string"},
+          "enabled": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["pass", "fail", "skipped"]},
+          "http_status": {"type": ["integer", "null"]},
+          "classification": {
+            "type": "string",
+            "enum": ["ok", "rate_limit", "auth", "outage", "network", "other", "missing_secret"]
+          },
+          "detail": {"type": "string"},
+          "attempts_used": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "external_failure_classes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

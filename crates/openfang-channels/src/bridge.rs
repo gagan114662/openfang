@@ -25,6 +25,19 @@ pub trait ChannelBridgeHandle: Send + Sync {
     /// Send a message to an agent and get the text response.
     async fn send_message(&self, agent_id: AgentId, message: &str) -> Result<String, String>;
 
+    /// Send a message with channel-user context when session affinity matters.
+    async fn send_message_for_channel(
+        &self,
+        agent_id: AgentId,
+        channel_type: &str,
+        channel_user_id: &str,
+        message: &str,
+    ) -> Result<String, String> {
+        let _ = channel_type;
+        let _ = channel_user_id;
+        self.send_message(agent_id, message).await
+    }
+
     /// Find an agent by name, returning its ID.
     async fn find_agent_by_name(&self, name: &str) -> Result<Option<AgentId>, String>;
 
@@ -535,10 +548,19 @@ async fn dispatch_message(
                         if let Some(aid) = maybe_id {
                             let h = handle.clone();
                             let t = text.clone();
+                            let channel_type = ct_str.to_string();
+                            let channel_user_id = message.sender.platform_id.clone();
                             let aid = *aid;
                             let name = name.clone();
                             handles_vec.push(tokio::spawn(async move {
-                                let result = h.send_message(aid, &t).await;
+                                let result = h
+                                    .send_message_for_channel(
+                                        aid,
+                                        &channel_type,
+                                        &channel_user_id,
+                                        &t,
+                                    )
+                                    .await;
                                 (name, aid, result)
                             }));
                         }
@@ -555,7 +577,15 @@ async fn dispatch_message(
                 openfang_types::config::BroadcastStrategy::Sequential => {
                     for (name, maybe_id) in &targets {
                         if let Some(aid) = maybe_id {
-                            match handle.send_message(*aid, &text).await {
+                            match handle
+                                .send_message_for_channel(
+                                    *aid,
+                                    ct_str,
+                                    &message.sender.platform_id,
+                                    &text,
+                                )
+                                .await
+                            {
                                 Ok(r) => responses.push(format!("[{name}]: {r}")),
                                 Err(e) => responses.push(format!("[{name}]: Error: {e}")),
                             }
@@ -693,7 +723,10 @@ async fn dispatch_message(
     let _ = adapter.send_typing(&message.sender).await;
 
     // Send to agent and relay response
-    match handle.send_message(agent_id, &text).await {
+    match handle
+        .send_message_for_channel(agent_id, ct_str, &message.sender.platform_id, &text)
+        .await
+    {
         Ok(response) => {
             send_response(adapter, &message.sender, response, thread_id, output_format).await;
             handle

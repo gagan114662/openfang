@@ -1,0 +1,116 @@
+{
+  "actions": [
+    {
+      "result": {
+        "rc": 255,
+        "service": "openfang.service",
+        "stderr": "ssh: connect to host 192.168.40.234 port 22: Host is down",
+        "stdout": ""
+      },
+      "sentry_report": {
+        "path_used": "/api/ops/guard/report",
+        "paths_tried": [
+          {
+            "path": "/api/ops/guard/report",
+            "status_code": 202
+          }
+        ],
+        "status_code": 202
+      },
+      "type": "restart_remote_openfang"
+    }
+  ],
+  "errors": [
+    "remote openfang.service is not active (state=unknown)"
+  ],
+  "generated_at": "2026-03-13T22:23:21.945235+00:00",
+  "local": {
+    "agent_count": 11,
+    "daemon_log_tail": [
+      "  >> OpenFang Agent OS",
+      "     The open-source agent operating system",
+      "",
+      "  Starting daemon...",
+      "",
+      "2026-03-05T22:04:03.546180Z  WARN openfang_kernel::config: Config validation warning path=/Users/gaganarora/.openfang/config.toml warning=Email configured but EMAIL_PASSWORD is not set",
+      "2026-03-05T22:04:03.547609Z  WARN openfang_kernel::config: Config validation warning path=/Users/gaganarora/.openfang/config.toml warning=RLM Postgres connection configured but OPENFANG_RLM_PG_MAIN_DSN is not set",
+      "2026-03-05T22:04:03.547709Z  WARN openfang_kernel::kernel: Config: Email configured but EMAIL_PASSWORD is not set",
+      "2026-03-05T22:04:03.547750Z  WARN openfang_kernel::kernel: Config: RLM Postgres connection configured but OPENFANG_RLM_PG_MAIN_DSN is not set",
+      "  \u2714 Kernel booted (claude-code/claude-opus-4-6)",
+      "  \u2714 122 models available",
+      "  \u2714 10 agent(s) loaded",
+      "",
+      "  API:         http://127.0.0.1:50051",
+      "  Dashboard:   http://127.0.0.1:50051/",
+      "  Provider:    claude-code",
+      "  Model:       claude-opus-4-6",
+      "",
+      "  hint: Open the dashboard in your browser, or run `openfang chat`",
+      "  hint: Press Ctrl+C to stop the daemon",
+      "",
+      "2026-03-05T22:04:05.238972Z  WARN openfang_api::channel_bridge: Email bot token env var 'EMAIL_PASSWORD' not set, skipping",
+      "2026-03-05T22:04:05.314665Z  WARN openfang_kernel::kernel: Local provider offline provider=vllm error=\"error sending request for url (http://localhost:8000/v1/models)\"",
+      "2026-03-05T22:04:05.315393Z  WARN openfang_kernel::kernel: Local provider offline provider=lmstudio error=\"error sending request for url (http://localhost:1234/v1/models)\""
+    ],
+    "health_body": {
+      "status": "ok",
+      "version": "0.1.0"
+    },
+    "health_status_code": 200,
+    "health_url": "http://127.0.0.1:50051/api/health",
+    "heartbeat_request_id": "bafc650f-b5cd-405b-86f5-a6f93be36181",
+    "heartbeat_status_code": 200,
+    "heartbeat_url": "http://127.0.0.1:50051/api/status",
+    "pid": "54339"
+  },
+  "remote": {
+    "control_plane_service": {
+      "rc": 255,
+      "service": "openfang_control_plane.service",
+      "state": "unknown",
+      "stderr": "ssh: connect to host 192.168.40.234 port 22: Host is down"
+    },
+    "host": "gagan-arora@192.168.40.234",
+    "openfang_service": {
+      "rc": 255,
+      "service": "openfang.service",
+      "state": "unknown",
+      "stderr": "ssh: connect to host 192.168.40.234 port 22: Operation timed out"
+    },
+    "telegram_socket_count": {
+      "count": -1,
+      "rc": 255,
+      "stderr": "ssh: connect to host 192.168.40.234 port 22: Host is down"
+    }
+  },
+  "sentry": {
+    "expected_query": "event.kind:api.request request.id:bafc650f-b5cd-405b-86f5-a6f93be36181",
+    "guard_report_body": {
+      "autonomy_state_written": true,
+      "dropped_fields": 0,
+      "event.kind": "ops.guard.check_failed",
+      "guard_interval_secs": 15,
+      "kind": "ops.guard.check_failed",
+      "ok": true,
+      "request_id": "bafc650f-b5cd-405b-86f5-a6f93be36181",
+      "serialized_bytes": 5112,
+      "trace_id": "beed75127dda30817bf79f558beefec7",
+      "transaction": "ops.guard.cycle",
+      "truncated_fields": []
+    },
+    "guard_report_path_used": "/api/ops/guard/report",
+    "guard_report_paths_tried": [
+      {
+        "path": "/api/ops/guard/report",
+        "status_code": 202
+      }
+    ],
+    "guard_report_status_code": 202,
+    "notes": [
+      "heartbeat endpoint emits canonical api.request logs",
+      "Telegram-originated activity should be searched under runtime.* event kinds",
+      "runtime user content query shape: payload.input.user_message:*<marker>*"
+    ]
+  },
+  "status": "fail"
+}

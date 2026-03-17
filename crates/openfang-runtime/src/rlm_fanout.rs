@@ -255,6 +255,7 @@ async fn execute_branch_llm(
                 .to_string(),
         ),
         thinking: None,
+        sentry_parent_span: None,
     };
 
     let response = driver

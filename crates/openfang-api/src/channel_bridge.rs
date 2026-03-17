@@ -51,6 +51,8 @@ use openfang_channels::mumble::MumbleAdapter;
 use openfang_channels::ntfy::NtfyAdapter;
 use openfang_channels::webhook::WebhookAdapter;
 use openfang_kernel::OpenFangKernel;
+use openfang_runtime::desktop_operator::{DesktopOperatorConfig, DesktopOperatorManager};
+use openfang_runtime::sentry_logs::{scope_event_context, EventContext};
 use openfang_types::agent::AgentId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,14 +62,61 @@ use tracing::{error, info, warn};
 pub struct KernelBridgeAdapter {
     kernel: Arc<OpenFangKernel>,
     started_at: Instant,
+    operator: Arc<DesktopOperatorManager>,
+}
+
+fn scoped_channel_context(channel_kind: &str, channel_user_id: Option<&str>) -> EventContext {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    EventContext {
+        trace_id: Some(run_id.clone()),
+        request_id: Some(run_id.clone()),
+        run_id: Some(run_id),
+        session_id: None,
+        agent_id: None,
+        agent_name: None,
+        channel_kind: Some(channel_kind.to_string()),
+        channel_user_id: channel_user_id.map(ToString::to_string),
+    }
 }
 
 #[async_trait]
 impl ChannelBridgeHandle for KernelBridgeAdapter {
     async fn send_message(&self, agent_id: AgentId, message: &str) -> Result<String, String> {
+        let result = scope_event_context(
+            scoped_channel_context("bridge", None),
+            self.kernel.send_message(agent_id, message),
+        )
+        .await
+        .map_err(|e| format!("{e}"))?;
+        Ok(result.response)
+    }
+
+    async fn send_message_for_channel(
+        &self,
+        agent_id: AgentId,
+        channel_type: &str,
+        channel_user_id: &str,
+        message: &str,
+    ) -> Result<String, String> {
+        if let Some(entry) = self.kernel.registry.get(agent_id) {
+            if entry.name == self.operator.config().default_agent_name {
+                return self
+                    .with_channel_context(channel_type, channel_user_id, async {
+                        self.operator
+                            .execute_operator_turn(channel_user_id, message)
+                    })
+                    .await
+                    .map(|reply| reply.user_message)
+                    .map_err(|err| err.user_message);
+            }
+        }
+
         let result = self
-            .kernel
-            .send_message(agent_id, message)
+            .with_channel_context(
+                channel_type,
+                channel_user_id,
+                self.kernel.send_message(agent_id, message),
+            )
             .await
             .map_err(|e| format!("{e}"))?;
         Ok(result.response)
@@ -908,6 +957,24 @@ impl ChannelBridgeHandle for KernelBridgeAdapter {
     }
 }
 
+impl KernelBridgeAdapter {
+    async fn with_channel_context<F, T>(
+        &self,
+        channel_type: &str,
+        channel_user_id: &str,
+        future: F,
+    ) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        scope_event_context(
+            scoped_channel_context(channel_type, Some(channel_user_id)),
+            future,
+        )
+        .await
+    }
+}
+
 /// Parse a trigger pattern string from chat into a `TriggerPattern`.
 fn parse_trigger_pattern(s: &str) -> Option<openfang_kernel::triggers::TriggerPattern> {
     use openfang_kernel::triggers::TriggerPattern;
@@ -1045,9 +1112,11 @@ pub async fn start_channel_bridge_with_config(
         return (None, Vec::new());
     }
 
+    let operator = Arc::new(DesktopOperatorManager::new(DesktopOperatorConfig::default()));
     let handle = KernelBridgeAdapter {
         kernel: kernel.clone(),
         started_at: Instant::now(),
+        operator: operator.clone(),
     };
 
     // Collect all adapters to start
@@ -1578,6 +1647,7 @@ pub async fn start_channel_bridge_with_config(
     let bridge_handle: Arc<dyn ChannelBridgeHandle> = Arc::new(KernelBridgeAdapter {
         kernel: kernel.clone(),
         started_at: Instant::now(),
+        operator,
     });
     let router = Arc::new(router);
     let mut manager = BridgeManager::new(bridge_handle, router);
@@ -1644,6 +1714,30 @@ pub async fn reload_channels_from_disk(
 
 #[cfg(test)]
 mod tests {
+    use super::scoped_channel_context;
+
+    #[test]
+    fn test_scoped_channel_context_sets_exact_channel_and_ids() {
+        let ctx = scoped_channel_context("telegram", Some("8444910202"));
+
+        assert_eq!(ctx.channel_kind.as_deref(), Some("telegram"));
+        assert_eq!(ctx.channel_user_id.as_deref(), Some("8444910202"));
+        assert!(ctx.run_id.is_some());
+        assert_eq!(ctx.trace_id, ctx.run_id);
+        assert_eq!(ctx.request_id, ctx.run_id);
+    }
+
+    #[test]
+    fn test_scoped_channel_context_supports_bridge_without_user() {
+        let ctx = scoped_channel_context("bridge", None);
+
+        assert_eq!(ctx.channel_kind.as_deref(), Some("bridge"));
+        assert!(ctx.channel_user_id.is_none());
+        assert!(ctx.run_id.is_some());
+        assert_eq!(ctx.trace_id, ctx.run_id);
+        assert_eq!(ctx.request_id, ctx.run_id);
+    }
+
     #[tokio::test]
     async fn test_bridge_skips_when_no_config() {
         let config = openfang_types::config::KernelConfig::default();

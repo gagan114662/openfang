@@ -1,0 +1,13 @@
+{
+  "consecutive_failures": 1,
+  "last_loop": "2026-03-16T19:30:31.193934+00:00",
+  "processed_issues": {
+    "PC-123": {
+      "error": "working tree is dirty; autonomy loop requires a clean checkout",
+      "status": "failed",
+      "updated_at": "2026-03-16T19:30:32.820534+00:00"
+    }
+  },
+  "prs_day": "2026-03-16",
+  "prs_today": 0
+}

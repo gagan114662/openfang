@@ -1,0 +1,13 @@
+{
+  "api_base": "http://127.0.0.1:50051",
+  "checks": {},
+  "errors": [
+    "missing token in env var: SENTRY_AUTH_TOKEN"
+  ],
+  "generated_at": "2026-03-05T23:11:30.239298+00:00",
+  "org": "openfang-monitoring",
+  "project": "openfang-monitoring",
+  "sentry_base_url": "https://sentry.io",
+  "status": "error",
+  "token_env": "SENTRY_AUTH_TOKEN"
+}

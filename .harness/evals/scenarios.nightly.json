@@ -1,0 +1,399 @@
+{
+  "version": "1.0.0",
+  "description": "Nightly deep eval scenarios for OpenFang (advisory).",
+  "profile": "nightly",
+  "scenarios": [
+    {
+      "id": "nightly-long-horizon-workflow-loop",
+      "name": "Workflow orchestration long-horizon guardrails",
+      "tier": "nightly",
+      "surface": "kernel",
+      "setup": {
+        "component": "openfang-kernel",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs",
+        "pattern": "test_workflow_register_and_resolve"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-kernel/tests/workflow_integration_test.rs",
+        "pattern": "test_workflow_register_and_resolve"
+      },
+      "failure_class": "long_horizon_workflow_drift",
+      "remediable": false,
+      "owner": "kernel",
+      "timeout_secs": 30,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-provider-fallback-driver-module",
+      "name": "Provider fallback driver module exists",
+      "tier": "nightly",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-runtime/src/drivers/fallback.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-runtime/src/drivers/fallback.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-runtime/src/drivers/fallback.rs"
+      },
+      "failure_class": "provider_fallback_degradation",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "medium"
+    },
+    {
+      "id": "nightly-provider-fallback-catalog-hooks",
+      "name": "Model catalog includes fallback awareness",
+      "tier": "nightly",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "source_scan",
+        "path": "crates/openfang-runtime/src/model_catalog.rs"
+      },
+      "expected": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/model_catalog.rs",
+        "pattern": "ModelCatalog"
+      },
+      "judge": {
+        "kind": "regex_present",
+        "path": "crates/openfang-runtime/src/model_catalog.rs",
+        "pattern": "ModelCatalog"
+      },
+      "failure_class": "provider_fallback_degradation",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "medium"
+    },
+    {
+      "id": "nightly-concurrency-kernel-heartbeat",
+      "name": "Kernel heartbeat module remains present",
+      "tier": "nightly",
+      "surface": "kernel",
+      "setup": {
+        "component": "openfang-kernel",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-kernel/src/heartbeat.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-kernel/src/heartbeat.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-kernel/src/heartbeat.rs"
+      },
+      "failure_class": "concurrency_saturation",
+      "remediable": false,
+      "owner": "kernel",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-concurrency-runtime-loop",
+      "name": "Runtime agent loop source remains present",
+      "tier": "nightly",
+      "surface": "runtime",
+      "setup": {
+        "component": "openfang-runtime",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "crates/openfang-runtime/src/agent_loop.rs"
+      },
+      "failure_class": "concurrency_saturation",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-flaky-external-sentry-script-exists",
+      "name": "Sentry integration script exists for external probe",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "scripts",
+        "mode": "advisory"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "scripts/test_sentry_integration.sh"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "scripts/test_sentry_integration.sh"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "scripts/test_sentry_integration.sh"
+      },
+      "failure_class": "flaky_external_probe",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-flaky-external-telegram-script-exists",
+      "name": "Telegram integration script exists for external probe",
+      "tier": "nightly",
+      "surface": "channels",
+      "setup": {
+        "component": "scripts",
+        "mode": "advisory"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "scripts/test_telegram_integration.sh"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "scripts/test_telegram_integration.sh"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "scripts/test_telegram_integration.sh"
+      },
+      "failure_class": "flaky_external_probe",
+      "remediable": false,
+      "owner": "channels",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-chaos-evidence-capture-script",
+      "name": "Evidence capture script available for chaos replay",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "scripts/harness/evidence_capture.py"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "scripts/harness/evidence_capture.py"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "scripts/harness/evidence_capture.py"
+      },
+      "failure_class": "long_horizon_workflow_drift",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-chaos-pr-packet-script",
+      "name": "PR packet generation script available",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "harness",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "filesystem",
+        "path": "scripts/harness/pr_packet.py"
+      },
+      "expected": {
+        "kind": "file_exists",
+        "path": "scripts/harness/pr_packet.py"
+      },
+      "judge": {
+        "kind": "file_exists",
+        "path": "scripts/harness/pr_packet.py"
+      },
+      "failure_class": "long_horizon_workflow_drift",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-provider-mode-configured",
+      "name": "Review provider orchestration configured",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "policy",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "reviewProviders.mode"
+      },
+      "judge": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "reviewProviders.mode"
+      },
+      "failure_class": "provider_fallback_degradation",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-claude-automation-configured",
+      "name": "Claude remediation automation configured",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "policy",
+        "mode": "static"
+      },
+      "stimulus": {
+        "kind": "json_scan",
+        "path": ".harness/policy.contract.json"
+      },
+      "expected": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "automation.claudeRemediation"
+      },
+      "judge": {
+        "kind": "json_field_exists",
+        "path": ".harness/policy.contract.json",
+        "field": "automation.claudeRemediation"
+      },
+      "failure_class": "long_horizon_workflow_drift",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "low"
+    },
+    {
+      "id": "nightly-fixture-provider-fallback",
+      "name": "Frozen fallback fixture remains deterministic",
+      "tier": "nightly",
+      "surface": "runtime",
+      "setup": {
+        "component": "eval-fixtures",
+        "mode": "frozen"
+      },
+      "stimulus": {
+        "kind": "fixture_lookup",
+        "fixture": "provider_fallback_degradation"
+      },
+      "expected": {
+        "kind": "fixture_contains",
+        "fixture": "provider_fallback_degradation",
+        "contains": "deterministic"
+      },
+      "judge": {
+        "kind": "fixture_contains",
+        "fixture": "provider_fallback_degradation",
+        "contains": "deterministic"
+      },
+      "failure_class": "provider_fallback_degradation",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "info"
+    },
+    {
+      "id": "nightly-fixture-concurrency",
+      "name": "Frozen concurrency fixture remains deterministic",
+      "tier": "nightly",
+      "surface": "runtime",
+      "setup": {
+        "component": "eval-fixtures",
+        "mode": "frozen"
+      },
+      "stimulus": {
+        "kind": "fixture_lookup",
+        "fixture": "concurrency_saturation"
+      },
+      "expected": {
+        "kind": "fixture_contains",
+        "fixture": "concurrency_saturation",
+        "contains": "deterministic"
+      },
+      "judge": {
+        "kind": "fixture_contains",
+        "fixture": "concurrency_saturation",
+        "contains": "deterministic"
+      },
+      "failure_class": "concurrency_saturation",
+      "remediable": false,
+      "owner": "runtime",
+      "timeout_secs": 20,
+      "severity": "info"
+    },
+    {
+      "id": "nightly-fixture-external",
+      "name": "Frozen external-probe fixture remains deterministic",
+      "tier": "nightly",
+      "surface": "harness",
+      "setup": {
+        "component": "eval-fixtures",
+        "mode": "frozen"
+      },
+      "stimulus": {
+        "kind": "fixture_lookup",
+        "fixture": "flaky_external_probe"
+      },
+      "expected": {
+        "kind": "fixture_contains",
+        "fixture": "flaky_external_probe",
+        "contains": "deterministic"
+      },
+      "judge": {
+        "kind": "fixture_contains",
+        "fixture": "flaky_external_probe",
+        "contains": "deterministic"
+      },
+      "failure_class": "flaky_external_probe",
+      "remediable": false,
+      "owner": "harness",
+      "timeout_secs": 20,
+      "severity": "info"
+    }
+  ]
+}

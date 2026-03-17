@@ -1,0 +1,46 @@
+{
+  "actions": [],
+  "errors": [],
+  "generated_at": "2026-03-05T22:24:43.661251+00:00",
+  "local": {
+    "agent_count": 10,
+    "health_body": {
+      "status": "ok",
+      "version": "0.1.0"
+    },
+    "health_status_code": 200,
+    "health_url": "http://127.0.0.1:50051/api/health",
+    "heartbeat_request_id": "344d72b0-2c16-4fdf-83eb-eb21f53f3b50",
+    "heartbeat_status_code": 200,
+    "heartbeat_url": "http://127.0.0.1:50051/api/status",
+    "pid": "51600"
+  },
+  "remote": {
+    "control_plane_service": {
+      "rc": 0,
+      "service": "openfang_control_plane.service",
+      "state": "inactive",
+      "stderr": ""
+    },
+    "host": "gagan-arora@192.168.40.234",
+    "openfang_service": {
+      "rc": 0,
+      "service": "openfang.service",
+      "state": "active",
+      "stderr": ""
+    },
+    "telegram_socket_count": {
+      "count": 0,
+      "rc": 127,
+      "stderr": "-tpn: -c: line 1: unexpected EOF while looking for matching `\"'\nbash: line 1: true\": command not found"
+    }
+  },
+  "sentry": {
+    "expected_query": "event.kind:api.request request.id:344d72b0-2c16-4fdf-83eb-eb21f53f3b50",
+    "notes": [
+      "heartbeat endpoint emits canonical api.request logs",
+      "Telegram-originated activity should be searched under runtime.* event kinds"
+    ]
+  },
+  "status": "pass"
+}

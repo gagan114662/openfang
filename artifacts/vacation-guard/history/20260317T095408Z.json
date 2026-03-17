@@ -1,0 +1,88 @@
+{
+  "actions": [],
+  "errors": [
+    "guard report endpoint failed status=404 attempted=/api/ops/guard/report,/ops/guard/report"
+  ],
+  "generated_at": "2026-03-17T09:54:08.531453+00:00",
+  "local": {
+    "agent_count": 13,
+    "daemon_log_tail": [
+      "  >> OpenFang Agent OS",
+      "     The open-source agent operating system",
+      "",
+      "  Starting daemon...",
+      "",
+      "2026-03-05T22:04:03.546180Z  WARN openfang_kernel::config: Config validation warning path=/Users/gaganarora/.openfang/config.toml warning=Email configured but EMAIL_PASSWORD is not set",
+      "2026-03-05T22:04:03.547609Z  WARN openfang_kernel::config: Config validation warning path=/Users/gaganarora/.openfang/config.toml warning=RLM Postgres connection configured but OPENFANG_RLM_PG_MAIN_DSN is not set",
+      "2026-03-05T22:04:03.547709Z  WARN openfang_kernel::kernel: Config: Email configured but EMAIL_PASSWORD is not set",
+      "2026-03-05T22:04:03.547750Z  WARN openfang_kernel::kernel: Config: RLM Postgres connection configured but OPENFANG_RLM_PG_MAIN_DSN is not set",
+      "  \u2714 Kernel booted (claude-code/claude-opus-4-6)",
+      "  \u2714 122 models available",
+      "  \u2714 10 agent(s) loaded",
+      "",
+      "  API:         http://127.0.0.1:50051",
+      "  Dashboard:   http://127.0.0.1:50051/",
+      "  Provider:    claude-code",
+      "  Model:       claude-opus-4-6",
+      "",
+      "  hint: Open the dashboard in your browser, or run `openfang chat`",
+      "  hint: Press Ctrl+C to stop the daemon",
+      "",
+      "2026-03-05T22:04:05.238972Z  WARN openfang_api::channel_bridge: Email bot token env var 'EMAIL_PASSWORD' not set, skipping",
+      "2026-03-05T22:04:05.314665Z  WARN openfang_kernel::kernel: Local provider offline provider=vllm error=\"error sending request for url (http://localhost:8000/v1/models)\"",
+      "2026-03-05T22:04:05.315393Z  WARN openfang_kernel::kernel: Local provider offline provider=lmstudio error=\"error sending request for url (http://localhost:1234/v1/models)\""
+    ],
+    "health_body": {
+      "status": "ok",
+      "version": "0.1.0"
+    },
+    "health_status_code": 200,
+    "health_url": "http://127.0.0.1:50051/api/health",
+    "heartbeat_request_id": "85e4eb7a-abec-480b-9c01-9ccf83a4aaac",
+    "heartbeat_status_code": 200,
+    "heartbeat_url": "http://127.0.0.1:50051/api/status",
+    "pid": "6344"
+  },
+  "remote": {
+    "control_plane_service": {
+      "rc": 0,
+      "service": "openfang_control_plane.service",
+      "state": "inactive",
+      "stderr": ""
+    },
+    "host": "gagan-arora@192.168.40.234",
+    "openfang_service": {
+      "rc": 0,
+      "service": "openfang.service",
+      "state": "active",
+      "stderr": ""
+    },
+    "telegram_socket_count": {
+      "count": 0,
+      "rc": 0,
+      "stderr": ""
+    }
+  },
+  "sentry": {
+    "expected_query": "event.kind:api.request request.id:85e4eb7a-abec-480b-9c01-9ccf83a4aaac",
+    "guard_report_body": {},
+    "guard_report_path_used": "/ops/guard/report",
+    "guard_report_paths_tried": [
+      {
+        "path": "/api/ops/guard/report",
+        "status_code": 404
+      },
+      {
+        "path": "/ops/guard/report",
+        "status_code": 404
+      }
+    ],
+    "guard_report_status_code": 404,
+    "notes": [
+      "heartbeat endpoint emits canonical api.request logs",
+      "Telegram-originated activity should be searched under runtime.* event kinds",
+      "runtime user content query shape: payload.input.user_message:*<marker>*"
+    ]
+  },
+  "status": "fail"
+}

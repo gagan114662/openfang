@@ -31,6 +31,14 @@ pub struct ChatCompletionRequest {
     pub stream: bool,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    /// Tool definitions (OpenAI function-calling format). Forwarded to the
+    /// underlying driver when present, enabling MiroFish and other clients to
+    /// use tool calling through the OpenFang proxy.
+    #[serde(default)]
+    pub tools: Option<serde_json::Value>,
+    /// Tool-choice constraint (e.g. "auto", "none", or a specific tool).
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

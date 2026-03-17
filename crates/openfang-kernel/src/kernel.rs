@@ -22,6 +22,7 @@ use openfang_runtime::llm_driver::{CompletionRequest, DriverConfig, LlmDriver, S
 use openfang_runtime::python_runtime::{self, PythonConfig};
 use openfang_runtime::routing::ModelRouter;
 use openfang_runtime::sandbox::{SandboxConfig, WasmSandbox};
+use openfang_runtime::sentry_logs::{capture_structured_log, flatten_with_prefix, provider_family};
 use openfang_runtime::tool_runner::builtin_tool_definitions;
 use openfang_types::agent::*;
 use openfang_types::capability::Capability;
@@ -32,8 +33,11 @@ use openfang_types::memory::Memory;
 use openfang_types::tool::ToolDefinition;
 
 use async_trait::async_trait;
+use sentry::Level;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// The main OpenFang kernel — coordinates all subsystems.
@@ -507,6 +511,8 @@ impl OpenFangKernel {
     /// Returns a ClientInitGuard that must be kept alive for the lifetime
     /// of the kernel. If Sentry is not configured (dsn is None), returns None.
     fn initialize_sentry(config: &KernelConfig) -> Option<sentry::ClientInitGuard> {
+        openfang_runtime::sentry_logs::configure(&config.sentry);
+
         let dsn = config.sentry.dsn.as_ref()?;
 
         // Skip if disabled
@@ -521,7 +527,7 @@ impl OpenFangKernel {
                 environment: Some(config.sentry.environment.clone().into()),
                 traces_sample_rate: config.sentry.traces_sample_rate,
                 send_default_pii: config.sentry.include_prompts,
-                attach_stacktrace: true,
+                attach_stacktrace: config.sentry.attach_stacktrace,
                 ..Default::default()
             },
         ));
@@ -530,6 +536,11 @@ impl OpenFangKernel {
         sentry::configure_scope(|scope| {
             scope.set_tag("build_sha", build_sha());
             scope.set_tag("build_version", env!("CARGO_PKG_VERSION"));
+            scope.set_tag("default_provider", config.default_model.provider.clone());
+            scope.set_tag(
+                "default_provider.family",
+                provider_family(&config.default_model.provider),
+            );
             for (key, value) in &config.sentry.tags {
                 scope.set_tag(key, value);
             }
@@ -538,6 +549,7 @@ impl OpenFangKernel {
         info!(
             environment = %config.sentry.environment,
             sample_rate = %config.sentry.traces_sample_rate,
+            structured_logs = config.sentry.enable_logs,
             "Sentry AI Monitoring initialized"
         );
 
@@ -608,6 +620,7 @@ impl OpenFangKernel {
             MemorySubstrate::open(&db_path, config.memory.decay_rate)
                 .map_err(|e| KernelError::BootFailed(format!("Memory init failed: {e}")))?,
         );
+        openfang_runtime::sentry_logs::configure_fact_store(memory.usage_conn());
 
         // Create LLM driver
         let driver_config = DriverConfig {
@@ -1291,17 +1304,40 @@ impl OpenFangKernel {
             KernelError::OpenFang(OpenFangError::AgentNotFound(agent_id.to_string()))
         })?;
 
-        // Dispatch based on module type
-        let result = if entry.manifest.module.starts_with("wasm:") {
-            self.execute_wasm_agent(&entry, message, kernel_handle)
-                .await
-        } else if entry.manifest.module.starts_with("python:") {
-            self.execute_python_agent(&entry, agent_id, message).await
-        } else {
-            // Default: LLM agent loop (builtin:chat or any unrecognized module)
-            self.execute_llm_agent(&entry, agent_id, message, kernel_handle)
-                .await
-        };
+        let existing_ctx = openfang_runtime::sentry_logs::current_event_context();
+        let run_id = existing_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.run_id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let trace_id = existing_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.trace_id.clone())
+            .or_else(|| Some(run_id.clone()));
+
+        let result = openfang_runtime::sentry_logs::scope_event_context(
+            openfang_runtime::sentry_logs::EventContext {
+                trace_id,
+                request_id: None,
+                run_id: Some(run_id),
+                session_id: Some(entry.session_id.to_string()),
+                agent_id: Some(agent_id.to_string()),
+                agent_name: Some(entry.name.clone()),
+                channel_kind: None,
+                channel_user_id: None,
+            },
+            async {
+                if entry.manifest.module.starts_with("wasm:") {
+                    self.execute_wasm_agent(&entry, message, kernel_handle)
+                        .await
+                } else if entry.manifest.module.starts_with("python:") {
+                    self.execute_python_agent(&entry, agent_id, message).await
+                } else {
+                    self.execute_llm_agent(&entry, agent_id, message, kernel_handle)
+                        .await
+                }
+            },
+        )
+        .await;
 
         match result {
             Ok(result) => {
@@ -1376,17 +1412,41 @@ impl OpenFangKernel {
             let kernel_clone = Arc::clone(self);
             let message_owned = message.to_string();
             let entry_clone = entry.clone();
+            let existing_ctx = openfang_runtime::sentry_logs::current_event_context();
+            let run_id = existing_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.run_id.clone())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let trace_id = existing_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.trace_id.clone())
+                .or_else(|| Some(run_id.clone()));
 
             let handle = tokio::spawn(async move {
-                let result = if is_wasm {
-                    kernel_clone
-                        .execute_wasm_agent(&entry_clone, &message_owned, kernel_handle)
-                        .await
-                } else {
-                    kernel_clone
-                        .execute_python_agent(&entry_clone, agent_id, &message_owned)
-                        .await
-                };
+                let result = openfang_runtime::sentry_logs::scope_event_context(
+                    openfang_runtime::sentry_logs::EventContext {
+                        trace_id,
+                        request_id: None,
+                        run_id: Some(run_id),
+                        session_id: Some(entry_clone.session_id.to_string()),
+                        agent_id: Some(agent_id.to_string()),
+                        agent_name: Some(entry_clone.name.clone()),
+                        channel_kind: None,
+                        channel_user_id: None,
+                    },
+                    async {
+                        if is_wasm {
+                            kernel_clone
+                                .execute_wasm_agent(&entry_clone, &message_owned, kernel_handle)
+                                .await
+                        } else {
+                            kernel_clone
+                                .execute_python_agent(&entry_clone, agent_id, &message_owned)
+                                .await
+                        }
+                    },
+                )
+                .await;
 
                 match result {
                     Ok(result) => {
@@ -1579,31 +1639,52 @@ impl OpenFangKernel {
             message.to_string()
         };
         let kernel_clone = Arc::clone(self);
+        let existing_ctx = openfang_runtime::sentry_logs::current_event_context();
+        let run_id = existing_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.run_id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let trace_id = existing_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.trace_id.clone())
+            .or_else(|| Some(run_id.clone()));
 
         let handle = tokio::spawn(async move {
-            // Auto-compact if the session is large before running the loop
-            if needs_compact {
-                info!(agent_id = %agent_id, messages = session.messages.len(), "Auto-compacting session");
-                match kernel_clone.compact_agent_session(agent_id).await {
-                    Ok(msg) => {
-                        info!(agent_id = %agent_id, "{msg}");
-                        // Reload the session after compaction
-                        if let Ok(Some(reloaded)) = memory.get_session(session.id) {
-                            session = reloaded;
+            openfang_runtime::sentry_logs::scope_event_context(
+                openfang_runtime::sentry_logs::EventContext {
+                    trace_id,
+                    request_id: None,
+                    run_id: Some(run_id),
+                    session_id: Some(session.id.to_string()),
+                    agent_id: Some(agent_id.to_string()),
+                    agent_name: Some(manifest.name.clone()),
+                    channel_kind: None,
+                    channel_user_id: None,
+                },
+                async move {
+                    // Auto-compact if the session is large before running the loop
+                    if needs_compact {
+                        info!(agent_id = %agent_id, messages = session.messages.len(), "Auto-compacting session");
+                        match kernel_clone.compact_agent_session(agent_id).await {
+                            Ok(msg) => {
+                                info!(agent_id = %agent_id, "{msg}");
+                                // Reload the session after compaction
+                                if let Ok(Some(reloaded)) = memory.get_session(session.id) {
+                                    session = reloaded;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(agent_id = %agent_id, "Auto-compaction failed: {e}");
+                            }
                         }
                     }
-                    Err(e) => {
-                        warn!(agent_id = %agent_id, "Auto-compaction failed: {e}");
-                    }
-                }
-            }
 
-            let messages_before = session.messages.len();
-            let mut skill_snapshot = kernel_clone
-                .skill_registry
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .snapshot();
+                    let messages_before = session.messages.len();
+                    let mut skill_snapshot = kernel_clone
+                        .skill_registry
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .snapshot();
 
             // Load workspace-scoped skills (override global skills with same name)
             if let Some(ref workspace) = manifest.workspace {
@@ -1669,8 +1750,8 @@ impl OpenFangKernel {
             )
             .await;
 
-            match result {
-                Ok(result) => {
+                    match result {
+                        Ok(result) => {
                     // Append new messages to canonical session for cross-channel memory
                     if session.messages.len() > messages_before {
                         let new_messages = session.messages[messages_before..].to_vec();
@@ -1718,12 +1799,15 @@ impl OpenFangKernel {
 
                     Ok(result)
                 }
-                Err(e) => {
+                        Err(e) => {
                     kernel_clone.supervisor.record_panic();
                     warn!(agent_id = %agent_id, error = %e, "Streaming agent loop failed");
                     Err(KernelError::OpenFang(e))
-                }
-            }
+                        }
+                    }
+                },
+            )
+            .await
         });
 
         // Store abort handle for cancellation support
@@ -2042,6 +2126,7 @@ impl OpenFangKernel {
                 temperature: manifest.model.temperature,
                 system: Some(manifest.model.system_prompt.clone()),
                 thinking: None,
+                sentry_parent_span: None,
             };
             let (complexity, routed_model) = router.select_model(&probe);
             info!(
@@ -2087,7 +2172,7 @@ impl OpenFangKernel {
             message.to_string()
         };
 
-        let result = run_agent_loop(
+        let result = match run_agent_loop(
             &manifest,
             &message_with_links,
             &mut session,
@@ -2118,7 +2203,55 @@ impl OpenFangKernel {
             Some(&self.process_manager),
         )
         .await
-        .map_err(KernelError::OpenFang)?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert(
+                    "event.kind".to_string(),
+                    serde_json::json!("runtime.agent_loop.failed"),
+                );
+                attrs.insert(
+                    "agent.id".to_string(),
+                    serde_json::json!(agent_id.to_string()),
+                );
+                attrs.insert(
+                    "agent.name".to_string(),
+                    serde_json::json!(manifest.name.clone()),
+                );
+                attrs.insert(
+                    "session.id".to_string(),
+                    serde_json::json!(session.id.0.to_string()),
+                );
+                attrs.insert(
+                    "provider".to_string(),
+                    serde_json::json!(manifest.model.provider.clone()),
+                );
+                attrs.insert(
+                    "model".to_string(),
+                    serde_json::json!(manifest.model.model.clone()),
+                );
+                attrs.insert("outcome".to_string(), serde_json::json!("error"));
+                attrs.insert(
+                    "failure_reason".to_string(),
+                    serde_json::json!(error.to_string()),
+                );
+                attrs.insert(
+                    "tool.count".to_string(),
+                    serde_json::json!(tools.len() as u64),
+                );
+                attrs.extend(flatten_with_prefix(
+                    "payload",
+                    &serde_json::json!({
+                        "input": {
+                            "user_message": message,
+                        }
+                    }),
+                ));
+                capture_structured_log(Level::Warning, "runtime.agent_loop.failed", attrs);
+                return Err(KernelError::OpenFang(error));
+            }
+        };
 
         // Append new messages to canonical session for cross-channel memory
         if session.messages.len() > messages_before {
@@ -2198,6 +2331,61 @@ impl OpenFangKernel {
                 result.cost_usd = None;
             }
         }
+
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            "event.kind".to_string(),
+            serde_json::json!("runtime.agent_loop.completed"),
+        );
+        attrs.insert(
+            "agent.id".to_string(),
+            serde_json::json!(agent_id.to_string()),
+        );
+        attrs.insert(
+            "agent.name".to_string(),
+            serde_json::json!(manifest.name.clone()),
+        );
+        attrs.insert(
+            "session.id".to_string(),
+            serde_json::json!(session.id.0.to_string()),
+        );
+        attrs.insert(
+            "provider".to_string(),
+            serde_json::json!(manifest.model.provider.clone()),
+        );
+        attrs.insert(
+            "model".to_string(),
+            serde_json::json!(manifest.model.model.clone()),
+        );
+        attrs.insert("outcome".to_string(), serde_json::json!("success"));
+        attrs.insert(
+            "iteration.count".to_string(),
+            serde_json::json!(result.iterations as u64),
+        );
+        attrs.insert(
+            "usage.input_tokens".to_string(),
+            serde_json::json!(result.total_usage.input_tokens),
+        );
+        attrs.insert(
+            "usage.output_tokens".to_string(),
+            serde_json::json!(result.total_usage.output_tokens),
+        );
+        if let Some(cost_usd) = result.cost_usd {
+            attrs.insert("cost.usd".to_string(), serde_json::json!(cost_usd));
+        }
+        attrs.extend(flatten_with_prefix(
+            "payload",
+            &serde_json::json!({
+                "input": {
+                    "user_message": message,
+                },
+                "output": {
+                    "response": result.response.clone(),
+                    "silent": result.silent,
+                }
+            }),
+        ));
+        capture_structured_log(Level::Info, "runtime.agent_loop.completed", attrs);
 
         Ok(result)
     }
@@ -3167,7 +3355,7 @@ impl OpenFangKernel {
                     catalog
                         .list_providers()
                         .iter()
-                        .filter(|p| !p.key_required)
+                        .filter(|p| openfang_runtime::provider_health::is_local_provider(&p.id))
                         .map(|p| (p.id.clone(), p.base_url.clone()))
                         .collect()
                 };
@@ -3579,17 +3767,110 @@ impl OpenFangKernel {
 
         // Start continuous/periodic loops
         let kernel = Arc::clone(self);
+        let max_restarts = self
+            .registry
+            .get(agent_id)
+            .and_then(|entry| {
+                entry
+                    .manifest
+                    .autonomous
+                    .as_ref()
+                    .map(|cfg| cfg.max_restarts)
+            })
+            .unwrap_or_else(|| AutonomousConfig::default().max_restarts);
+        let agent_name = name.to_string();
+        let schedule_kind = match schedule {
+            ScheduleMode::Reactive => "reactive",
+            ScheduleMode::Continuous { .. } => "continuous",
+            ScheduleMode::Periodic { .. } => "periodic",
+            ScheduleMode::Proactive { .. } => "proactive",
+        }
+        .to_string();
         self.background
             .start_agent(agent_id, name, schedule, move |aid, msg| {
                 let k = Arc::clone(&kernel);
+                let agent_name = agent_name.clone();
+                let schedule_kind = schedule_kind.clone();
                 tokio::spawn(async move {
                     match k.send_message(aid, &msg).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            // send_message already records the panic in supervisor,
-                            // just log the background context here
-                            warn!(agent_id = %aid, error = %e, "Background tick failed");
+                        Ok(_) => {
+                            if k.supervisor.agent_restart_count(aid) > 0 {
+                                k.supervisor.reset_agent_restarts(aid);
+                            }
                         }
+                        Err(e) => match k.supervisor.record_agent_restart(aid, max_restarts) {
+                            Ok(restart_count) => {
+                                warn!(
+                                    agent_id = %aid,
+                                    error = %e,
+                                    restart_count,
+                                    max_restarts,
+                                    "Background tick failed; managed agent will retry"
+                                );
+                            }
+                            Err(restart_count) => {
+                                let _ = k.registry.set_state(aid, AgentState::Crashed);
+
+                                let mut attrs = std::collections::BTreeMap::new();
+                                attrs.insert(
+                                    "event.kind".to_string(),
+                                    serde_json::json!("runtime.agent_loop.failed"),
+                                );
+                                attrs.insert(
+                                    "agent.id".to_string(),
+                                    serde_json::json!(aid.to_string()),
+                                );
+                                attrs.insert(
+                                    "agent.name".to_string(),
+                                    serde_json::json!(agent_name.clone()),
+                                );
+                                attrs.insert("outcome".to_string(), serde_json::json!("error"));
+                                attrs.insert(
+                                    "failure_reason".to_string(),
+                                    serde_json::json!("managed agent exceeded max auto-restarts"),
+                                );
+                                if let Some(entry) = k.registry.get(aid) {
+                                    attrs.insert(
+                                        "session.id".to_string(),
+                                        serde_json::json!(entry.session_id.to_string()),
+                                    );
+                                    attrs.insert(
+                                        "provider".to_string(),
+                                        serde_json::json!(entry.manifest.model.provider.clone()),
+                                    );
+                                    attrs.insert(
+                                        "model".to_string(),
+                                        serde_json::json!(entry.manifest.model.model.clone()),
+                                    );
+                                }
+                                attrs.extend(flatten_with_prefix(
+                                    "payload",
+                                    &serde_json::json!({
+                                        "input": {
+                                            "user_message": msg,
+                                        },
+                                        "autonomy": {
+                                            "schedule_kind": schedule_kind,
+                                            "restart_count": restart_count,
+                                            "max_restarts": max_restarts,
+                                        }
+                                    }),
+                                ));
+                                capture_structured_log(
+                                    Level::Error,
+                                    "runtime.agent_loop.failed",
+                                    attrs,
+                                );
+
+                                warn!(
+                                    agent_id = %aid,
+                                    restart_count,
+                                    max_restarts,
+                                    "Managed agent exceeded max auto-restarts, giving up"
+                                );
+                                k.background.stop_agent(aid);
+                            }
+                        },
                     }
                 })
             });
@@ -4793,6 +5074,87 @@ impl KernelHandle for OpenFangKernel {
         Ok(decision == ApprovalDecision::Approved)
     }
 
+    async fn sentry_get(
+        &self,
+        path: &str,
+        query: &BTreeMap<String, String>,
+        org: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let sentry_cfg = &self.config.sentry;
+
+        let token = if let Some(env) = &sentry_cfg.auth_token_env {
+            std::env::var(env)
+                .map_err(|_| format!("Sentry auth token env var '{env}' is not set"))?
+        } else if let Some(token) = &sentry_cfg.auth_token {
+            token.clone()
+        } else {
+            return Err("Sentry auth token not configured (set sentry.auth_token or sentry.auth_token_env)".to_string());
+        };
+
+        let mut query_map = query.clone();
+        if !query_map.contains_key("environment") && !sentry_cfg.environment.is_empty() {
+            query_map.insert("environment".to_string(), sentry_cfg.environment.clone());
+        }
+
+        let resolved_path = normalize_sentry_path(path, org, project, sentry_cfg)?;
+        let url = build_sentry_url(&sentry_cfg.api_base_url, &resolved_path)?;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(sentry_cfg.api_timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+        let mut request = client
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json");
+        if !query_map.is_empty() {
+            request = request.query(&query_map);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("Sentry API request failed: {e}"))?;
+
+        let status = response.status();
+        if let Some(len) = response.content_length() {
+            if len > SENTRY_MAX_RESPONSE_BYTES as u64 {
+                return Err(format!(
+                    "Sentry API response too large: {} bytes (max {})",
+                    len, SENTRY_MAX_RESPONSE_BYTES
+                ));
+            }
+        }
+
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read Sentry response: {e}"))?;
+        if body.len() > SENTRY_MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "Sentry API response too large: {} bytes (max {})",
+                body.len(),
+                SENTRY_MAX_RESPONSE_BYTES
+            ));
+        }
+
+        if !status.is_success() {
+            let snippet = truncate_utf8(&body, 1024);
+            return Err(format!(
+                "Sentry API error {}: {}",
+                status.as_u16(),
+                snippet
+            ));
+        }
+
+        serde_json::from_slice(&body).map_err(|e| {
+            let snippet = truncate_utf8(&body, 1024);
+            format!("Sentry API returned non-JSON response: {e}. Body: {snippet}")
+        })
+    }
+
     fn list_a2a_agents(&self) -> Vec<(String, String)> {
         let agents = self
             .a2a_external_agents
@@ -4802,6 +5164,14 @@ impl KernelHandle for OpenFangKernel {
             .iter()
             .map(|(url, card)| (card.name.clone(), url.clone()))
             .collect()
+    }
+
+    fn get_mirofish_config(&self) -> Option<openfang_types::config::MirofishConfig> {
+        if self.config.mirofish.enabled {
+            Some(self.config.mirofish.clone())
+        } else {
+            None
+        }
     }
 
     fn get_a2a_agent_url(&self, name: &str) -> Option<String> {
@@ -4914,6 +5284,81 @@ impl openfang_wire::peer::PeerHandle for OpenFangKernel {
     fn uptime_secs(&self) -> u64 {
         self.booted_at.elapsed().as_secs()
     }
+}
+
+const SENTRY_MAX_RESPONSE_BYTES: usize = 512 * 1024;
+
+fn normalize_sentry_path(
+    raw: &str,
+    org: Option<&str>,
+    project: Option<&str>,
+    sentry: &openfang_types::config::SentryConfig,
+) -> Result<String, String> {
+    let mut path = raw.trim();
+    if path.is_empty() {
+        return Err("Missing 'path' parameter".to_string());
+    }
+    if path.contains("://") {
+        return Err("Sentry path must be a relative API path, not a URL".to_string());
+    }
+
+    path = path.trim_start_matches('/');
+    if let Some(stripped) = path.strip_prefix("api/0/") {
+        path = stripped;
+    }
+
+    let mut resolved = path.to_string();
+    if resolved.contains("{org}") {
+        let org_value = org
+            .or(sentry.org_slug.as_deref())
+            .ok_or_else(|| {
+                "Sentry org slug not configured (set sentry.org_slug or pass org)".to_string()
+            })?;
+        resolved = resolved.replace("{org}", org_value);
+    }
+    if resolved.contains("{project}") {
+        let project_value = project
+            .or(sentry.project_slug.as_deref())
+            .ok_or_else(|| {
+                "Sentry project slug not configured (set sentry.project_slug or pass project)"
+                    .to_string()
+            })?;
+        resolved = resolved.replace("{project}", project_value);
+    }
+
+    if resolved.contains("..") {
+        return Err("Sentry path may not contain '..' segments".to_string());
+    }
+
+    if resolved.is_empty() {
+        return Err("Sentry path resolved to empty string".to_string());
+    }
+
+    Ok(resolved)
+}
+
+fn build_sentry_url(base: &str, path: &str) -> Result<String, String> {
+    let base = base.trim_end_matches('/');
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Err("Sentry api_base_url must start with http:// or https://".to_string());
+    }
+    Ok(format!("{base}/api/0/{path}"))
+}
+
+fn truncate_utf8(bytes: &[u8], max_chars: usize) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    truncate_str(&s, max_chars)
+}
+
+fn truncate_str(input: &str, max_chars: usize) -> String {
+    if input.len() <= max_chars {
+        return input.to_string();
+    }
+    let mut end = max_chars.min(input.len());
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... [truncated]", &input[..end])
 }
 
 #[cfg(test)]
@@ -5126,5 +5571,37 @@ mod tests {
         assert!(!caps
             .iter()
             .any(|c| matches!(c, Capability::ToolInvoke(name) if name == "shell_exec")));
+    }
+
+    #[test]
+    fn test_normalize_sentry_path_substitution() {
+        let mut sentry = openfang_types::config::SentryConfig::default();
+        sentry.org_slug = Some("foolish".to_string());
+        sentry.project_slug = Some("openfang".to_string());
+        let resolved = normalize_sentry_path(
+            "organizations/{org}/projects/{org}/{project}/events/",
+            None,
+            None,
+            &sentry,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            "organizations/foolish/projects/foolish/openfang/events/"
+        );
+    }
+
+    #[test]
+    fn test_normalize_sentry_path_missing_org() {
+        let sentry = openfang_types::config::SentryConfig::default();
+        let err =
+            normalize_sentry_path("organizations/{org}/events/", None, None, &sentry).unwrap_err();
+        assert!(err.contains("org slug"));
+    }
+
+    #[test]
+    fn test_build_sentry_url_trims_base() {
+        let url = build_sentry_url("https://sentry.io/", "organizations/slug/events/").unwrap();
+        assert_eq!(url, "https://sentry.io/api/0/organizations/slug/events/");
     }
 }

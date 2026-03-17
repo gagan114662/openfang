@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openfang.dev/schemas/novel-failure-candidates.schema.json",
+  "title": "NovelFailureCandidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "generated_at",
+    "head_sha",
+    "new_candidates",
+    "deduped_candidates",
+    "candidate_scenarios",
+    "errors"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "missing", "error"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "head_sha": {
+      "type": "string"
+    },
+    "new_candidates": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "deduped_candidates": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "candidate_scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "name", "failure_class"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "failure_class": {"type": "string"},
+          "source_provider": {"type": "string"}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

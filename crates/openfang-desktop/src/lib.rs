@@ -11,7 +11,9 @@ mod tray;
 mod updater;
 
 use openfang_kernel::OpenFangKernel;
+use openfang_runtime::sentry_logs::capture_structured_log;
 use openfang_types::event::{EventPayload, LifecycleEvent, SystemEvent};
+use sentry::Level;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -46,6 +48,18 @@ pub fn run() {
     let kernel_for_notifications = server_handle.kernel.clone();
 
     info!("OpenFang server running on port {port}");
+    capture_structured_log(
+        Level::Info,
+        "desktop.lifecycle.started",
+        std::collections::BTreeMap::from([
+            (
+                "event.kind".to_string(),
+                serde_json::json!("desktop.lifecycle.started"),
+            ),
+            ("desktop.port".to_string(), serde_json::json!(port)),
+            ("outcome".to_string(), serde_json::json!("success")),
+        ]),
+    );
 
     let url = format!("http://127.0.0.1:{port}");
 
@@ -168,7 +182,42 @@ pub fn run() {
                                 .body(&body)
                                 .show()
                             {
+                                capture_structured_log(
+                                    Level::Warning,
+                                    "desktop.lifecycle.notification_failed",
+                                    std::collections::BTreeMap::from([
+                                        (
+                                            "event.kind".to_string(),
+                                            serde_json::json!(
+                                                "desktop.lifecycle.notification_failed"
+                                            ),
+                                        ),
+                                        ("outcome".to_string(), serde_json::json!("error")),
+                                        (
+                                            "failure_reason".to_string(),
+                                            serde_json::json!(e.to_string()),
+                                        ),
+                                    ]),
+                                );
                                 warn!("Failed to send desktop notification: {e}");
+                            } else {
+                                capture_structured_log(
+                                    Level::Info,
+                                    "desktop.lifecycle.notification_forwarded",
+                                    std::collections::BTreeMap::from([
+                                        (
+                                            "event.kind".to_string(),
+                                            serde_json::json!(
+                                                "desktop.lifecycle.notification_forwarded"
+                                            ),
+                                        ),
+                                        ("outcome".to_string(), serde_json::json!("success")),
+                                        (
+                                            "notification.title".to_string(),
+                                            serde_json::json!(title),
+                                        ),
+                                    ]),
+                                );
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -207,5 +256,16 @@ pub fn run() {
 
     // App event loop has ended — shut down the embedded server + kernel
     info!("Tauri app closed, shutting down embedded server...");
+    capture_structured_log(
+        Level::Info,
+        "desktop.lifecycle.shutdown_requested",
+        std::collections::BTreeMap::from([
+            (
+                "event.kind".to_string(),
+                serde_json::json!("desktop.lifecycle.shutdown_requested"),
+            ),
+            ("outcome".to_string(), serde_json::json!("success")),
+        ]),
+    );
     server_handle.shutdown();
 }

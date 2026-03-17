@@ -1,0 +1,652 @@
+{
+  "generated_at": "2026-03-01T17:02:43.869350+00:00",
+  "head_sha": "local-dev-sha",
+  "profile": "blocking",
+  "profile_config": {
+    "llm_mode": "mock_frozen",
+    "network_mode": "isolated",
+    "seed": 42
+  },
+  "results": [
+    {
+      "artifacts": [],
+      "deterministic_hash": "9b30db2a3e96e213b39f9bc70bf8038c0f41404a6aaaf516f569af2fb4639db4",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"file_exists\", \"path\": \"crates/openfang-api/tests/api_integration_test.rs\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "exists=True path=/Users/gaganarora/Desktop/my projects/open_fang/crates/openfang-api/tests/api_integration_test.rs",
+      "owner": "api",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "api-integration-test-exists",
+      "seed": 42,
+      "severity": "low",
+      "surface": "api"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "7015ea5f7dc78945cf53b08b52ca54720d692b9b4ea9cdd4aee53b4322ef18de",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"file_exists\", \"path\": \"crates/openfang-channels/tests/bridge_integration_test.rs\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "exists=True path=/Users/gaganarora/Desktop/my projects/open_fang/crates/openfang-channels/tests/bridge_integration_test.rs",
+      "owner": "channels",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "channels-bridge-integration-test-exists",
+      "seed": 42,
+      "severity": "low",
+      "surface": "channels"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/checks_resolver.py"
+      ],
+      "deterministic_hash": "a3ba36d3600514b63e5cfbc92a5d9c09d56065231d612d1493092d4058dfee9d",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/checks_resolver.py\", \"pattern\": \"agent-evals-pr\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 28,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "checks-resolver-maps-agent-evals",
+      "seed": 42,
+      "severity": "low",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/checks_resolver.py"
+      ],
+      "deterministic_hash": "2351a6bd78355d090969b12c49248d80418bf56f34195bddc2ca19cc10431ab1",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/checks_resolver.py\", \"pattern\": \"\\\"build\\\": \\\"ci-check\\\"\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 16,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "checks-resolver-maps-ci-check",
+      "seed": 42,
+      "severity": "low",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        ".github/workflows/claude-remediation-agent.yml"
+      ],
+      "deterministic_hash": "a899ce1b055595e96c0178cd40b32d7b3d73bab1ec26f4db963f8405c37734fa",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \".github/workflows/claude-remediation-agent.yml\", \"pattern\": \"claude-remediate\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 139,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "claude-workflow-label-gate-present",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/codex_failover_runner.py"
+      ],
+      "deterministic_hash": "5b7eed6e79f2752595c39de0f644d88369f53028412d0fbdc2c0b399b8d3b17c",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/codex_failover_runner.py\", \"pattern\": \"RATE_LIMIT_SIGNATURES\"}",
+      "failure_class": "retry_timeout_handling",
+      "failure_reason": "",
+      "line_guess": 16,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "codex-failover-rate-limit-signatures",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/codex_failover_runner.py"
+      ],
+      "deterministic_hash": "0bef04b0878171b8dbd6a3f7a8715d7ce50e807d4808a8174ac1dd391805e0c0",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/codex_failover_runner.py\", \"pattern\": \"failover_triggered\"}",
+      "failure_class": "retry_timeout_handling",
+      "failure_reason": "",
+      "line_guess": 151,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "codex-failover-secondary-trigger",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "8a248d218a292e62713b58ef79ee25c3cc96ec9461cfbb6f852e2eb0101e4eb6",
+      "duration_ms": 0,
+      "expected": "{\"contains\": \"deterministic\", \"fixture\": \"routing_correctness\", \"kind\": \"fixture_contains\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "fixture=routing_correctness contains=True needle=deterministic",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "frozen-llm-routing-fixture",
+      "seed": 42,
+      "severity": "info",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "80ded2fa5613b94c2b096e9d4bf2dc0ae8e8c603fd3c075379b848628a05ed44",
+      "duration_ms": 0,
+      "expected": "{\"contains\": \"deterministic\", \"fixture\": \"sentry_redaction_invariants\", \"kind\": \"fixture_contains\"}",
+      "failure_class": "sentry_redaction_invariants",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "fixture=sentry_redaction_invariants contains=True needle=deterministic",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "frozen-llm-sentry-fixture",
+      "seed": 42,
+      "severity": "info",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "334eb5ff8923e92006904faba6b66e2bf5a43b63ec14bc202e0b30aaa17d827f",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"file_exists\", \"path\": \"crates/openfang-kernel/tests/workflow_integration_test.rs\"}",
+      "failure_class": "memory_isolation",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "exists=True path=/Users/gaganarora/Desktop/my projects/open_fang/crates/openfang-kernel/tests/workflow_integration_test.rs",
+      "owner": "kernel",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "kernel-workflow-integration-test-exists",
+      "seed": 42,
+      "severity": "low",
+      "surface": "kernel"
+    },
+    {
+      "artifacts": [
+        ".harness/policy.contract.json"
+      ],
+      "deterministic_hash": "773d8d09f1d82c1839e8c6c8712596d96d004862681572ba15df2129693a6505",
+      "duration_ms": 0,
+      "expected": "{\"field\": \"remediationGuardrails.allowedPaths\", \"kind\": \"json_array_min_length\", \"min_length\": 1, \"path\": \".harness/policy.contract.json\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 235,
+      "observed": "field=remediationGuardrails.allowedPaths length=3",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "policy-allowed-paths-configured",
+      "seed": 42,
+      "severity": "high",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        ".harness/policy.contract.json"
+      ],
+      "deterministic_hash": "355ce8b27ddb9759f0e3e4128b83965956a29476621a090c0df9d65639270203",
+      "duration_ms": 0,
+      "expected": "{\"field\": \"remediationGuardrails.blockedPaths\", \"kind\": \"json_array_min_length\", \"min_length\": 1, \"path\": \".harness/policy.contract.json\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 240,
+      "observed": "field=remediationGuardrails.blockedPaths length=4",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "policy-blocked-paths-configured",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        ".harness/policy.contract.json"
+      ],
+      "deterministic_hash": "f9ddd516f8db7338691b7b660b3c6f40a4993cb25b1b8f4283eb029d1844209c",
+      "duration_ms": 0,
+      "expected": "{\"field\": \"remediationGuardrails\", \"kind\": \"json_field_exists\", \"path\": \".harness/policy.contract.json\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 234,
+      "observed": "field=remediationGuardrails exists=True",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "policy-has-remediation-guardrails",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        ".harness/policy.contract.json"
+      ],
+      "deterministic_hash": "e53294730004bc9149f5ebee108d5921c4c7f5f7118ce28442f9d38754b6b556",
+      "duration_ms": 0,
+      "expected": "{\"field\": \"remediationGuardrails.maxFilesPerPR\", \"kind\": \"json_number_range\", \"max\": 50, \"min\": 1, \"path\": \".harness/policy.contract.json\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 246,
+      "observed": "field=remediationGuardrails.maxFilesPerPR value=10.0",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "policy-max-files-guardrail",
+      "seed": 42,
+      "severity": "high",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        ".harness/policy.contract.json"
+      ],
+      "deterministic_hash": "1a155f3ed3e8767bc864b1cec3ff7c59e104cb74171e946a078b195ad889d258",
+      "duration_ms": 0,
+      "expected": "{\"field\": \"remediationGuardrails.maxLinesPerFile\", \"kind\": \"json_number_range\", \"max\": 2000, \"min\": 10, \"path\": \".harness/policy.contract.json\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 247,
+      "observed": "field=remediationGuardrails.maxLinesPerFile value=500.0",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "policy-max-lines-guardrail",
+      "seed": 42,
+      "severity": "high",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/browser_evidence_verify.py"
+      ],
+      "deterministic_hash": "2a48490870e787b1bed54f9abc8cbbb6cf1877f0ce10a02b15825b0ff3608cac",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/browser_evidence_verify.py\", \"pattern\": \"min_screenshots\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 152,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "pr-harness-screenshot-minimum-enforced",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/browser_evidence_verify.py"
+      ],
+      "deterministic_hash": "92a7a52207881837a5b1db0db232abd81f361380e8e62029831cb606916866ce",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/browser_evidence_verify.py\", \"pattern\": \"min_videos\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 156,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "pr-harness-video-minimum-enforced",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "14770bac6950e13afbb3ec6ee9f3bada4740149d78dfc4c8b3edf0b055171084",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"file_exists\", \"path\": \".github/workflows/pr-review-harness.yml\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "exists=True path=/Users/gaganarora/Desktop/my projects/open_fang/.github/workflows/pr-review-harness.yml",
+      "owner": "harness",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "pr-review-harness-workflow-exists",
+      "seed": 42,
+      "severity": "low",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/remediation_runner.py"
+      ],
+      "deterministic_hash": "a7cce47f78e3eab5b171513d320cfa0ed8bffb46cc162e24b154299f9f415047",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/remediation_runner.py\", \"pattern\": \"\\\"eval\\\"\"}",
+      "failure_class": "remediation_guardrail_enforcement",
+      "failure_reason": "",
+      "line_guess": 106,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "remediation-runner-supports-eval-provider",
+      "seed": 42,
+      "severity": "high",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "scripts/harness/risk_policy_gate.py"
+      ],
+      "deterministic_hash": "4518981433483579bcc76d3fdca55ebe685dc96ea54dfee960d05a540921af71",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"scripts/harness/risk_policy_gate.py\", \"pattern\": \"--claude-findings\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 57,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "risk-gate-loads-claude-findings",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "c4106cfb6818315a9bbd8f6a9903f8513890459ecdd2f51e9492b274715ef6f4",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"file_exists\", \"path\": \".github/workflows/risk-policy-gate.yml\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "exists=True path=/Users/gaganarora/Desktop/my projects/open_fang/.github/workflows/risk-policy-gate.yml",
+      "owner": "harness",
+      "pass": true,
+      "remediable": false,
+      "scenario_id": "risk-policy-gate-workflow-exists",
+      "seed": 42,
+      "severity": "low",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-channels/src/bridge.rs"
+      ],
+      "deterministic_hash": "bc8e25d2c8413f27c837ebc4f19be2b86eaa728e172eb9fceddc99ce332e3dc5",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-channels/src/bridge.rs\", \"pattern\": \"target_agent_name\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 605,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "channels",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "routing-bridge-resolves-target-agent-name",
+      "seed": 42,
+      "severity": "high",
+      "surface": "channels"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-channels/src/email.rs"
+      ],
+      "deterministic_hash": "227a374bb72ea923d6ca57aa0bcea8119fd43a3535d637b10e71a8dbf929d472",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-channels/src/email.rs\", \"pattern\": \"target_agent_name\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 161,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "channels",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "routing-email-target-agent-metadata",
+      "seed": 42,
+      "severity": "high",
+      "surface": "channels"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-channels/src/router.rs"
+      ],
+      "deterministic_hash": "d4ad12cce8558fdf8400cf3945967154f38f536431601cdc9d77228e201cccc0",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-channels/src/router.rs\", \"pattern\": \"set_default\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 57,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "channels",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "routing-router-system-default-support",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "channels"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-channels/src/router.rs"
+      ],
+      "deterministic_hash": "35c0b399bd0db2dc3aa3e1476fdfd905b17586cceff90b948e708fcb44dff710",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-channels/src/router.rs\", \"pattern\": \"set_user_default\"}",
+      "failure_class": "routing_correctness",
+      "failure_reason": "",
+      "line_guess": 62,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "channels",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "routing-router-user-default-support",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "channels"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-runtime/src/agent_loop.rs"
+      ],
+      "deterministic_hash": "4fbf7676e39f72546ddaa4f912cf45e4412f879f647ffbde76a06e645372d294",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-runtime/src/agent_loop.rs\", \"pattern\": \"rate_limited_sentry_capture\"}",
+      "failure_class": "retry_timeout_handling",
+      "failure_reason": "",
+      "line_guess": 144,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-capture-rate-limited",
+      "seed": 42,
+      "severity": "medium",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [],
+      "deterministic_hash": "e3d48ef5c245166535c52f1ca4efe39173f1a9d44f5934a9bb2819265d9de297",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_absent\", \"path\": \"crates/openfang-runtime/src/agent_loop.rs\", \"pattern\": \"set_extra\\\\(\\\"raw_error\\\"\"}",
+      "failure_class": "sentry_redaction_invariants",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "pattern_hit=False kind=regex_absent",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-no-raw-error-extra",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-runtime/src/agent_loop.rs"
+      ],
+      "deterministic_hash": "e94e3c333e0c70fce3586ef818f41cd486efd69b27c71f944534aab5ecd97e93",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-runtime/src/agent_loop.rs\", \"pattern\": \"sanitize_sentry_message\"}",
+      "failure_class": "sentry_redaction_invariants",
+      "failure_reason": "",
+      "line_guess": 124,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-sanitize-helper-exists",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-runtime/src/agent_loop.rs"
+      ],
+      "deterministic_hash": "25c8750c80faf9a0caf854e7d76b60f0cf11de03d66e9528ad1c13e255426093",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-runtime/src/agent_loop.rs\", \"pattern\": \"set_span\\\\(None\\\\)\"}",
+      "failure_class": "retry_timeout_handling",
+      "failure_reason": "",
+      "line_guess": 1,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-scope-span-cleared",
+      "seed": 42,
+      "severity": "high",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-runtime/src/agent_loop.rs"
+      ],
+      "deterministic_hash": "2e33457057041a26f5626273a9f0f0a5a3ffe71becfe712f6cc33c4512e4a4af",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-runtime/src/agent_loop.rs\", \"pattern\": \"transaction.finish\\\\(\"}",
+      "failure_class": "retry_timeout_handling",
+      "failure_reason": "",
+      "line_guess": 106,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "runtime",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-transaction-finish-called",
+      "seed": 42,
+      "severity": "high",
+      "surface": "runtime"
+    },
+    {
+      "artifacts": [
+        ".github/workflows/sentry-remediation-agent.yml"
+      ],
+      "deterministic_hash": "2c5171e96702dc66cb0485ac719844ce77b687f4ce3ba36da56f6f077ee2a774",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \".github/workflows/sentry-remediation-agent.yml\", \"pattern\": \"codex_failover_runner.py\"}",
+      "failure_class": "tool_guardrails",
+      "failure_reason": "",
+      "line_guess": 176,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "harness",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "sentry-workflow-uses-codex-failover",
+      "seed": 42,
+      "severity": "high",
+      "surface": "harness"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-api/src/routes.rs"
+      ],
+      "deterministic_hash": "d2a68e13e166966bf7c0bbdd812ce8c235377131f4dbdb1078a3a8bcf664a680",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-api/src/routes.rs\", \"pattern\": \"pub async fn webhook_agent\"}",
+      "failure_class": "webhook_auth_rejection",
+      "failure_reason": "",
+      "line_guess": 8468,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "api",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "webhook-agent-token-validation",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "api"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-api/src/routes.rs"
+      ],
+      "deterministic_hash": "e077920d0fd752616c97a4dc402755f555dcd365cf1ac8da6f512447c3d3b6d9",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-api/src/routes.rs\", \"pattern\": \"ct_eq\"}",
+      "failure_class": "webhook_auth_rejection",
+      "failure_reason": "",
+      "line_guess": 8806,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "api",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "webhook-constant-time-compare",
+      "seed": 42,
+      "severity": "high",
+      "surface": "api"
+    },
+    {
+      "artifacts": [
+        "crates/openfang-api/src/routes.rs"
+      ],
+      "deterministic_hash": "0be7780290da9d45c0e48652429f56b4c16fdc6642a3fcfbdce0c1c50a222d4b",
+      "duration_ms": 0,
+      "expected": "{\"kind\": \"regex_present\", \"path\": \"crates/openfang-api/src/routes.rs\", \"pattern\": \"validate_webhook_token\"}",
+      "failure_class": "webhook_auth_rejection",
+      "failure_reason": "",
+      "line_guess": 8409,
+      "observed": "pattern_hit=True kind=regex_present",
+      "owner": "api",
+      "pass": true,
+      "remediable": true,
+      "scenario_id": "webhook-wake-token-validation",
+      "seed": 42,
+      "severity": "critical",
+      "surface": "api"
+    }
+  ],
+  "seed": 42,
+  "summary": {
+    "all_blocking_passed": true,
+    "blocking_threshold": 1.0,
+    "failed": 0,
+    "failure_classes": {},
+    "pass_rate": 1.0,
+    "passed": 34,
+    "total": 34
+  }
+}
