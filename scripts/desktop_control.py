@@ -40,6 +40,8 @@ OCR_TOOL_SOURCE = OCR_TOOL_DIR / "ocr_image_lines.swift"
 OCR_TOOL_BINARY = OCR_TOOL_DIR / "ocr_image_lines"
 CLAUDE_AX_TOOL_SOURCE = OCR_TOOL_DIR / "claude_ax_prompt.swift"
 CLAUDE_AX_TOOL_BINARY = OCR_TOOL_DIR / "claude_ax_prompt"
+CLAUDE_PANEL_PROBE_SOURCE = OCR_TOOL_DIR / "claude_ax_probe.swift"
+CLAUDE_PANEL_PROBE_BINARY = OCR_TOOL_DIR / "claude_ax_probe"
 
 CALC_BUTTONS = {
     "AC": (31.5, 123.0),
@@ -297,6 +299,116 @@ def ensure_frontmost_app(app_name: str, attempts: int = 4, delay: float = 0.25) 
         if active.get("app_name") == app_name:
             return True
     return False
+
+
+def open_permission_settings(permission_kind: str) -> None:
+    pane_map = {
+        "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "screen_capture": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    }
+    url = pane_map.get(permission_kind)
+    if not url:
+        return
+    subprocess.run(["open", url], capture_output=True, text=True, check=False)
+
+
+def accessibility_trusted() -> tuple[bool, str | None]:
+    try:
+        from ApplicationServices import AXIsProcessTrusted
+
+        trusted = bool(AXIsProcessTrusted())
+        return trusted, None if trusted else "Accessibility permission is not granted."
+    except Exception as exc:
+        return False, f"Failed checking Accessibility trust: {exc}"
+
+
+def desktop_preflight() -> dict:
+    blockers: list[dict] = []
+    active = {}
+    screen = {"width": 0, "height": 0}
+
+    try:
+        active = active_window_data()
+    except Exception as exc:
+        blockers.append(
+            {
+                "kind": "active_window",
+                "reason": f"Failed reading active window: {exc}",
+                "settings": None,
+            }
+        )
+
+    app_name = str(active.get("app_name") or "").strip()
+    if not app_name:
+        blockers.append(
+            {
+                "kind": "active_window",
+                "reason": "No frontmost active window is available.",
+                "settings": None,
+            }
+        )
+
+    try:
+        screen = screen_size_data()
+    except Exception as exc:
+        blockers.append(
+            {
+                "kind": "screen_size",
+                "reason": f"Failed reading screen size: {exc}",
+                "settings": None,
+            }
+        )
+
+    width = int(screen.get("width") or 0)
+    height = int(screen.get("height") or 0)
+    if width <= 0 or height <= 0:
+        blockers.append(
+            {
+                "kind": "screen_size",
+                "reason": f"Invalid screen size ({width}x{height}).",
+                "settings": None,
+            }
+        )
+
+    ax_ok, ax_reason = accessibility_trusted()
+    if not ax_ok:
+        blockers.append(
+            {
+                "kind": "accessibility",
+                "reason": ax_reason or "Accessibility permission is not granted.",
+                "settings": "accessibility",
+            }
+        )
+
+    screenshot_probe = {"success": False, "error": "unknown"}
+    try:
+        screenshot_probe = run_bridge([{"action": "Screenshot"}])[0]
+    except Exception as exc:
+        screenshot_probe = {"success": False, "error": str(exc)}
+    if not screenshot_probe.get("success"):
+        blockers.append(
+            {
+                "kind": "screen_capture",
+                "reason": screenshot_probe.get("error")
+                or "Screen Recording permission is not granted.",
+                "settings": "screen_capture",
+            }
+        )
+
+    for blocker in blockers:
+        setting_kind = blocker.get("settings")
+        if isinstance(setting_kind, str):
+            open_permission_settings(setting_kind)
+
+    return {
+        "ok": not blockers,
+        "failure_phase": "preflight" if blockers else None,
+        "failure_reason": blockers[0]["reason"] if blockers else None,
+        "active_window": active,
+        "screen": {"width": width, "height": height},
+        "screenshot_probe": screenshot_probe,
+        "blockers": blockers,
+    }
 
 
 def screenshot_data() -> dict:
@@ -623,6 +735,166 @@ def claude_ax_prompt(text: str) -> dict:
         return json.loads(result.stdout.strip())
     except json.JSONDecodeError:
         return {"success": False, "error": result.stdout.strip() or result.stderr.strip() or "Claude AX helper returned invalid JSON"}
+
+
+def ensure_claude_panel_probe_tool() -> bool:
+    OCR_TOOL_DIR.mkdir(parents=True, exist_ok=True)
+    swift_source = r'''import Cocoa
+import ApplicationServices
+
+func attr<T>(_ element: AXUIElement, _ name: String) -> T? {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+    guard err == .success, let v = value else { return nil }
+    return v as? T
+}
+
+func axPoint(_ element: AXUIElement, _ name: String) -> CGPoint? {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+    guard err == .success, let raw = value, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    let axValue = raw as! AXValue
+    guard AXValueGetType(axValue) == .cgPoint else { return nil }
+    var point = CGPoint.zero
+    return AXValueGetValue(axValue, .cgPoint, &point) ? point : nil
+}
+
+func axSize(_ element: AXUIElement, _ name: String) -> CGSize? {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+    guard err == .success, let raw = value, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    let axValue = raw as! AXValue
+    guard AXValueGetType(axValue) == .cgSize else { return nil }
+    var size = CGSize.zero
+    return AXValueGetValue(axValue, .cgSize, &size) ? size : nil
+}
+
+struct Candidate {
+    let role: String
+    let title: String
+    let desc: String
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+}
+
+func collect(_ element: AXUIElement, depth: Int = 0, maxDepth: Int = 24, into results: inout [Candidate]) {
+    let role: String = attr(element, kAXRoleAttribute as String) ?? ""
+    let title: String = attr(element, kAXTitleAttribute as String) ?? ""
+    let desc: String = attr(element, kAXDescriptionAttribute as String) ?? ""
+    let point = axPoint(element, kAXPositionAttribute as String) ?? .zero
+    let size = axSize(element, kAXSizeAttribute as String) ?? .zero
+    results.append(
+        Candidate(
+            role: role,
+            title: title,
+            desc: desc,
+            x: point.x,
+            y: point.y,
+            width: size.width,
+            height: size.height
+        )
+    )
+    guard depth < maxDepth else { return }
+    if let children: [AXUIElement] = attr(element, kAXChildrenAttribute as String) {
+        for child in children {
+            collect(child, depth: depth + 1, maxDepth: maxDepth, into: &results)
+        }
+    }
+}
+
+let apps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome")
+guard let app = apps.first else {
+    print("{\"success\":false,\"error\":\"Chrome not running\"}")
+    exit(1)
+}
+let appElem = AXUIElementCreateApplication(app.processIdentifier)
+var windowRef: CFTypeRef?
+let windowErr = AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &windowRef)
+guard windowErr == .success, let focusedWindow = windowRef else {
+    print("{\"success\":false,\"error\":\"No focused Chrome window\",\"ax_error\":\(windowErr.rawValue)}")
+    exit(1)
+}
+let root = focusedWindow as! AXUIElement
+let windowPos = axPoint(root, kAXPositionAttribute as String) ?? .zero
+let windowSize = axSize(root, kAXSizeAttribute as String) ?? .zero
+let midX = windowPos.x + (windowSize.width * 0.60)
+var candidates: [Candidate] = []
+collect(root, into: &candidates)
+
+let rightPane = candidates.filter { $0.x >= midX && $0.width > 0 }
+let textAreas = rightPane.filter { $0.role == "AXTextArea" || $0.role == "AXTextField" }
+let buttons = rightPane.filter { $0.role == "AXButton" }
+let closeSidePanel = buttons.contains {
+    let hay = "\($0.title) \($0.desc)".lowercased()
+    return hay.contains("close side panel")
+}
+let sendButton = buttons.contains {
+    let hay = "\($0.title) \($0.desc)".lowercased()
+    return hay.contains("send message") || hay == "send"
+}
+let panelSignals = rightPane.contains {
+    let hay = "\($0.title) \($0.desc)".lowercased()
+    return hay.contains("act without asking")
+        || hay.contains("how can i help you")
+        || hay.contains("type / for commands")
+        || hay.contains("stop claude")
+}
+let panelVisible = panelSignals || closeSidePanel || !textAreas.isEmpty
+let payload: [String: Any] = [
+    "success": true,
+    "panel_visible": panelVisible,
+    "composer_found": !textAreas.isEmpty,
+    "send_button_found": sendButton,
+    "close_side_panel_found": closeSidePanel,
+    "window_width": windowSize.width,
+    "window_height": windowSize.height,
+    "candidate_count": candidates.count,
+]
+let data = try JSONSerialization.data(withJSONObject: payload)
+print(String(data: data, encoding: .utf8)!)
+'''
+    current_source = (
+        CLAUDE_PANEL_PROBE_SOURCE.read_text()
+        if CLAUDE_PANEL_PROBE_SOURCE.exists()
+        else ""
+    )
+    if current_source != swift_source:
+        CLAUDE_PANEL_PROBE_SOURCE.write_text(swift_source)
+    if (not CLAUDE_PANEL_PROBE_BINARY.exists()) or (
+        CLAUDE_PANEL_PROBE_BINARY.stat().st_mtime < CLAUDE_PANEL_PROBE_SOURCE.stat().st_mtime
+    ):
+        compile_result = subprocess.run(
+            ["swiftc", "-O", str(CLAUDE_PANEL_PROBE_SOURCE), "-o", str(CLAUDE_PANEL_PROBE_BINARY)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if compile_result.returncode != 0:
+            return False
+    return True
+
+
+def claude_ax_probe() -> dict:
+    if not ensure_claude_panel_probe_tool():
+        return {"success": False, "error": "Failed compiling Claude AX probe helper"}
+    result = subprocess.run(
+        [str(CLAUDE_PANEL_PROBE_BINARY)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    stdout = (result.stdout or "").strip()
+    if result.returncode != 0 and not stdout:
+        return {"success": False, "error": result.stderr.strip() or "Claude AX probe failed"}
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        return {
+            "success": False,
+            "error": stdout or result.stderr.strip() or "Claude AX probe returned invalid JSON",
+        }
 
 
 def image_size(path: str) -> tuple[float, float] | None:
