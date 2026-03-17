@@ -81,6 +81,14 @@ mcp_capture_payloads = true              # Include MCP request/response payloads
 # region = "us-west-2"
 # deployment = "kubernetes"
 
+# MiroFish simulation integration
+[mirofish]
+enabled = false
+base_url = "http://localhost:5001"
+api_key_env = "MIROFISH_API_KEY"
+allowed_local_roots = ["/Users/gaganarora/Desktop/my projects"]  # customize for your machine
+timeout_secs = 300
+
 # Channel adapters (configure tokens via environment variables)
 # Telegram bidirectional integration
 [channels.telegram]

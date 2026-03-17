@@ -1722,6 +1722,7 @@
         </div>
         <div class="tabs" role="tablist">
           <div class="tab" :class="{ active: tab === 'status' }" @click="tab = 'status'">Status</div>
+          <div class="tab" :class="{ active: tab === 'analyze' }" @click="tab = 'analyze'">Analyze Folder</div>
           <div class="tab" :class="{ active: tab === 'graph' }" @click="tab = 'graph'">Build Graph</div>
           <div class="tab" :class="{ active: tab === 'simulate' }" @click="tab = 'simulate'">Run Simulation</div>
           <div class="tab" :class="{ active: tab === 'interview' }" @click="tab = 'interview'">Interview</div>
@@ -1743,6 +1744,63 @@
               <pre class="mt-2" style="font-size:12px;color:var(--accent)">[mirofish]
 enabled = true
 base_url = "http://localhost:5001"</pre>
+            </div>
+          </div>
+          <div x-show="tab === 'analyze'">
+            <div class="card mb-4" style="border-left:3px solid var(--accent)">
+              <div class="font-bold mb-1">Analyze Local Folder</div>
+              <div class="text-sm text-dim">One-click pipeline: scan folder, heuristic gate, graph build, simulation, and report.</div>
+            </div>
+            <div class="card">
+              <label class="form-label">Folder Path (absolute)</label>
+              <input class="form-input mb-3" x-model="analyzeForm.folder_path" placeholder="/Users/gaganarora/Desktop/my projects/open_fang">
+              <label class="form-label">Topic / Question (optional)</label>
+              <input class="form-input mb-3" x-model="analyzeForm.topic" placeholder="Forecast failure cascades or scenario risks in this codebase">
+              <label class="form-label">Rounds (optional)</label>
+              <input class="form-input mb-3" type="number" x-model.number="analyzeForm.rounds" placeholder="Auto">
+              <label class="form-label">Scan Mode</label>
+              <select class="form-input mb-3" x-model="analyzeForm.mode">
+                <option value="fast">fast</option>
+                <option value="deep">deep</option>
+              </select>
+              <button class="btn btn-primary" @click="analyzeFolder()" :disabled="analyzing">
+                <span x-show="!analyzing">Analyze &amp; Simulate</span>
+                <span x-show="analyzing">Running...</span>
+              </button>
+              <div x-show="analyzeResult" class="mt-3">
+                <div class="badge" :class="analyzeResult?.status === 'completed' ? 'badge-success' : analyzeResult?.status === 'skipped' ? 'badge-warning' : 'badge-danger'" x-text="analyzeResult?.status || 'unknown'"></div>
+                <span class="text-sm ml-2">Run ID: <code x-text="analyzeResult?.run_id"></code></span>
+                <span class="text-sm ml-2" x-show="analyzeResult?.graph_id">Graph: <code x-text="analyzeResult?.graph_id"></code></span>
+                <span class="text-sm ml-2" x-show="analyzeResult?.simulation_id">Simulation: <code x-text="analyzeResult?.simulation_id"></code></span>
+              </div>
+              <div x-show="analyzeResult?.auto_trigger" class="mt-3 text-sm text-dim">
+                Auto-trigger: <strong x-text="analyzeResult?.auto_trigger?.should_run ? 'run' : 'skip'"></strong>
+                <span x-text="' — ' + (analyzeResult?.auto_trigger?.reason || '')"></span>
+              </div>
+              <div x-show="analyzeResult?.scan_summary" class="mt-3 text-sm text-dim">
+                Files included: <span x-text="analyzeResult?.scan_summary?.files_included"></span>,
+                skipped: <span x-text="analyzeResult?.scan_summary?.files_skipped"></span>,
+                bytes: <span x-text="analyzeResult?.scan_summary?.total_document_bytes"></span>
+              </div>
+              <div x-show="analyzeResult?.timeline?.length" class="mt-3">
+                <div class="font-bold text-sm mb-2">Status Timeline</div>
+                <template x-for="(item, idx) in analyzeResult.timeline" :key="idx">
+                  <div class="text-sm text-dim mb-1">
+                    <strong x-text="item.stage"></strong>
+                    <span x-text="': ' + item.status"></span>
+                    <span x-show="item.reason" x-text="' — ' + item.reason"></span>
+                    <span x-show="item.error" x-text="' — ' + item.error"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="analyzeResult?.report?.content" class="mt-3 card" style="background:var(--bg-deeper)">
+                <div class="font-bold text-sm mb-1">Generated Report</div>
+                <div class="text-sm" style="white-space:pre-wrap" x-text="analyzeResult?.report?.content"></div>
+              </div>
+              <div x-show="analyzeResult?.run_id" class="mt-3 text-sm text-dim">
+                Sentry query: <code x-text="'run.id:' + analyzeResult?.run_id"></code>
+              </div>
+              <div x-show="analyzeError" class="mt-3 text-danger text-sm" x-text="analyzeError"></div>
             </div>
           </div>
           <div x-show="tab === 'graph'">

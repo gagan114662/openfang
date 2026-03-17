@@ -430,7 +430,8 @@ async fn test_mirofish_analyze_folder_skips_static_topic_inside_allowlist() {
     std::fs::write(repo_dir.join("README.md"), "# Demo\nHello").unwrap();
     std::fs::write(repo_dir.join("main.rs"), "fn main() { println!(\"hi\"); }").unwrap();
 
-    let server = start_test_server_with_mirofish_roots(vec![root_tmp.path().display().to_string()]).await;
+    let server =
+        start_test_server_with_mirofish_roots(vec![root_tmp.path().display().to_string()]).await;
     let client = reqwest::Client::new();
 
     let resp = client

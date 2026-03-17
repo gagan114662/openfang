@@ -5866,7 +5866,9 @@ fn scan_folder_documents(root: &StdPath, mode: &str) -> Result<FolderScanResult,
             continue;
         }
 
-        let remaining_total = settings.max_total_bytes.saturating_sub(total_document_bytes);
+        let remaining_total = settings
+            .max_total_bytes
+            .saturating_sub(total_document_bytes);
         if remaining_total == 0 {
             skipped_files += files.len().saturating_sub(idx);
             break;
@@ -6045,7 +6047,10 @@ pub async fn mirofish_analyze_folder(
         .clone()
         .or_else(|| context.run_id.clone())
         .unwrap_or_else(|| run_id.clone());
-    let trace_id = context.trace_id.clone().unwrap_or_else(|| request_id.clone());
+    let trace_id = context
+        .trace_id
+        .clone()
+        .unwrap_or_else(|| request_id.clone());
     let folder_path_hash = stable_path_hash(&body.folder_path);
     let scan_mode = match normalized_scan_mode(body.mode.as_deref()) {
         Ok(mode) => mode,
@@ -6178,7 +6183,11 @@ pub async fn mirofish_analyze_folder(
 
     let scan_root = target_folder.clone();
     let scan_mode_clone = scan_mode.clone();
-    let scan = match tokio::task::spawn_blocking(move || scan_folder_documents(&scan_root, &scan_mode_clone)).await {
+    let scan = match tokio::task::spawn_blocking(move || {
+        scan_folder_documents(&scan_root, &scan_mode_clone)
+    })
+    .await
+    {
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
             capture_mirofish_stage_log(
@@ -6282,7 +6291,10 @@ pub async fn mirofish_analyze_folder(
         None,
         BTreeMap::from([
             ("auto_trigger".to_string(), serde_json::json!(should_run)),
-            ("reason".to_string(), serde_json::json!(decision_reason.clone())),
+            (
+                "reason".to_string(),
+                serde_json::json!(decision_reason.clone()),
+            ),
         ]),
     );
 
@@ -6305,10 +6317,9 @@ pub async fn mirofish_analyze_folder(
     }
 
     let client = openfang_runtime::mirofish::MirofishClient::from_config(cfg);
-    let topic = body
-        .topic
-        .clone()
-        .unwrap_or_else(|| "Forecast likely risks and failure cascades in this codebase".to_string());
+    let topic = body.topic.clone().unwrap_or_else(|| {
+        "Forecast likely risks and failure cascades in this codebase".to_string()
+    });
     let project_name = make_project_name(&target_folder, &run_id);
 
     timeline.push(serde_json::json!({
@@ -6412,7 +6423,12 @@ pub async fn mirofish_analyze_folder(
     );
 
     let simulation = match client
-        .create_simulation(&graph.graph_id, Some(&graph.project_id), &topic, body.rounds)
+        .create_simulation(
+            &graph.graph_id,
+            Some(&graph.project_id),
+            &topic,
+            body.rounds,
+        )
         .await
     {
         Ok(value) => value,
