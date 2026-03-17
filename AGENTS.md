@@ -116,6 +116,25 @@ taskkill //PID <pid> //F
 - Dashboard is Alpine.js SPA in `static/index_body.html` — new tabs need both HTML and JS data/methods
 - Config fields need: struct field + `#[serde(default)]` + Default impl entry + Serialize/Deserialize derives
 
+## MANDATORY: Commit Before Ending Session
+**You MUST commit all work before your session ends. Never leave a dirty worktree.**
+
+Before finishing ANY task or session:
+```bash
+# Option 1: Use the auto-commit script
+python3 scripts/claude/auto_commit.py .
+
+# Option 2: Manual commit
+git add -A && git commit -m "wip($(git rev-parse --abbrev-ref HEAD)): <describe what you did>"
+```
+
+To switch branches safely (auto-commits first):
+```bash
+git sw <branch-name>
+```
+
+**If you leave uncommitted changes, the user cannot switch branches or start new work.** This is the #1 workflow blocker. Always commit.
+
 ## Common Gotchas
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first
 - `PeerRegistry` is `Option<PeerRegistry>` on kernel but `Option<Arc<PeerRegistry>>` on `AppState` — wrap with `.as_ref().map(|r| Arc::new(r.clone()))`
