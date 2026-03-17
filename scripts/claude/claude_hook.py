@@ -185,6 +185,17 @@ def main() -> int:
     }
     write_artifact(record)
     post_structured_event(record)
+
+    # Auto-commit on session end/stop to prevent dirty worktrees
+    if hook_name in ("session-end", "stop"):
+        try:
+            subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "claude" / "auto_commit.py"), cwd],
+                timeout=10,
+            )
+        except Exception:
+            pass
+
     return result.returncode
 
 
