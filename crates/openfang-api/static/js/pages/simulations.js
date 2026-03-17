@@ -8,6 +8,12 @@ function simulationsPage() {
     baseUrl: '',
     version: '',
 
+    // Local folder analyzer
+    analyzeForm: { folder_path: '', topic: '', rounds: null, mode: 'fast' },
+    analyzing: false,
+    analyzeResult: null,
+    analyzeError: '',
+
     // Graph builder
     graphForm: { project_name: '', documents: '' },
     graphBuilding: false,
@@ -44,6 +50,40 @@ function simulationsPage() {
         this.baseUrl = d.base_url || '(from config)';
       } catch {
         this.connected = false;
+      }
+    },
+
+    async analyzeFolder() {
+      this.analyzing = true;
+      this.analyzeError = '';
+      this.analyzeResult = null;
+      try {
+        const payload = {
+          folder_path: (this.analyzeForm.folder_path || '').trim(),
+          topic: (this.analyzeForm.topic || '').trim(),
+          mode: this.analyzeForm.mode || 'fast'
+        };
+        if (this.analyzeForm.rounds) payload.rounds = this.analyzeForm.rounds;
+
+        const r = await fetch('/api/mirofish/analyze-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Analyze folder failed');
+
+        this.analyzeResult = d;
+        if (d.graph_id) this.simForm.graph_id = d.graph_id;
+        if (d.simulation_id) {
+          this.interviewForm.simulation_id = d.simulation_id;
+          this.reportForm.simulation_id = d.simulation_id;
+        }
+        if (d.report && d.report.content) this.reportResult = d.report;
+      } catch (e) {
+        this.analyzeError = e.message;
+      } finally {
+        this.analyzing = false;
       }
     },
 
