@@ -1310,54 +1310,51 @@ def chrome_open_claude_sidepanel_on_current_tab() -> tuple[bool, dict]:
     before_url = chrome_tab_value(
         'tell application "Google Chrome" to get URL of active tab of front window'
     ) or ""
-    subprocess.run(
-        [
-            "osascript",
-            "-e",
-            'tell application "System Events" to keystroke "e" using command down',
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    time.sleep(1.1)
-    refreshed = run_bridge([{"action": "GetActiveWindow"}])
-    active = refreshed[-1].get("data") or {}
-    screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
-    after_url = chrome_tab_value(
-        'tell application "Google Chrome" to get URL of active tab of front window'
-    ) or ""
-    subprocess.run(
-        ["swift", "/tmp/list_toolbar_buttons.swift"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    ax_out = subprocess.run(
-        ["swift", "/tmp/list_toolbar_buttons.swift"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.lower()
-    side_visible = (
-        "close side panel" in ax_out
-        or "how can i help you today" in ocr_text.lower()
-        or "type / for commands" in ocr_text.lower()
-        or "act without asking" in ocr_text.lower()
-    )
-    if after_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/"):
-        active = dict(active)
-        active["current_url"] = after_url
-        active["before_url"] = before_url
-        active["error"] = "Claude side panel detached into its own tab."
-        return False, active
-    if side_visible:
-        active = dict(active)
-        active["page_hint"] = "claude_extension_panel"
-        active["screenshot_path"] = screenshot.get("path")
-        active["page_text_excerpt"] = ocr_text[:3000]
-        return True, active
-    return False, active
+    attempts = 3
+    last_active: dict = {}
+    for attempt in range(1, attempts + 1):
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to keystroke "e" using command down',
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        time.sleep(1.0 + (attempt * 0.25))
+        refreshed = run_bridge([{"action": "GetActiveWindow"}])
+        active = refreshed[-1].get("data") or {}
+        screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+        probe = claude_ax_probe()
+        after_url = chrome_tab_value(
+            'tell application "Google Chrome" to get URL of active tab of front window'
+        ) or ""
+        detached = after_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/")
+        side_visible = bool(probe.get("panel_visible")) or sidepanel_hint_visible(page_hint, ocr_text)
+        same_tab = not before_url or after_url == before_url or url_matches_target(after_url, SENTRY_URL)
+        last_active = dict(active)
+        last_active["current_url"] = after_url
+        last_active["before_url"] = before_url
+        last_active["attempt_count"] = attempt
+        last_active["ax_probe"] = probe
+        last_active["claude_attached"] = bool(side_visible and same_tab and not detached)
+        last_active["screenshot_path"] = screenshot.get("path")
+        last_active["page_text_excerpt"] = ocr_text[:3000]
+        if detached:
+            last_active["failure_phase"] = "attach_sidepanel"
+            last_active["failure_reason"] = "Claude side panel detached into its own tab."
+            last_active["error"] = last_active["failure_reason"]
+            return False, last_active
+        if side_visible and same_tab:
+            last_active["page_hint"] = "claude_extension_panel"
+            return True, last_active
+    if last_active:
+        last_active["failure_phase"] = "attach_sidepanel"
+        last_active["failure_reason"] = "Claude side panel did not attach to the active Sentry tab."
+        last_active["error"] = last_active["failure_reason"]
+    return False, last_active
 
 
 def chrome_open_claude_live() -> tuple[bool, dict]:
@@ -1831,29 +1828,106 @@ def claude_stop_active_panel_if_needed(screenshot: dict, ocr_text: str) -> dict:
     }
 
 
+def claude_failure_payload(
+    *,
+    text: str,
+    phase: str,
+    reason: str,
+    active: dict | None = None,
+    current_url: str = "",
+    attempt_count: int = 0,
+    attached: bool = False,
+    response_started: bool = False,
+    extra_data: dict | None = None,
+) -> dict:
+    data = {
+        "active_window": active or {},
+        "current_url": current_url,
+        "typed_text": text,
+        "failure_phase": phase,
+        "failure_reason": reason,
+        "attempt_count": attempt_count,
+        "response_started": response_started,
+        "claude.attached": attached,
+    }
+    if extra_data:
+        data.update(extra_data)
+    return {
+        "success": False,
+        "error": f"{phase}: {reason}",
+        "failure_phase": phase,
+        "failure_reason": reason,
+        "response_started": response_started,
+        "attempt_count": attempt_count,
+        "data": data,
+    }
+
+
 def claude_prompt_live(text: str) -> dict:
     wants_sentry = "sentry" in text.lower()
+    attempt_count = 0
+    preflight = desktop_preflight()
+    if not preflight.get("ok"):
+        return claude_failure_payload(
+            text=text,
+            phase="preflight",
+            reason=str(preflight.get("failure_reason") or "Desktop preflight failed."),
+            active=preflight.get("active_window") or {},
+            current_url="",
+            attempt_count=attempt_count,
+            attached=False,
+            response_started=False,
+            extra_data={"preflight": preflight},
+        )
+
     if wants_sentry:
-        chrome_set_front_tab_url(SENTRY_URL)
-        time.sleep(1.5)
+        attempt_count += 1
+        if not chrome_set_front_tab_url(SENTRY_URL):
+            active = (run_bridge([{"action": "GetActiveWindow"}])[-1].get("data") or {})
+            current_url = chrome_tab_value(
+                'tell application "Google Chrome" to get URL of active tab of front window'
+            ) or ""
+            return claude_failure_payload(
+                text=text,
+                phase="focus_sentry_tab",
+                reason="Failed to focus the Sentry issues tab in Chrome.",
+                active=active,
+                current_url=current_url,
+                attempt_count=attempt_count,
+            )
+        time.sleep(1.2)
+
     current_url = chrome_tab_value(
         'tell application "Google Chrome" to get URL of active tab of front window'
     ) or ""
     active = (run_bridge([{"action": "GetActiveWindow"}])[-1].get("data") or {})
-    if current_url and active.get("app_name") != "Google Chrome":
+    if active.get("app_name") != "Google Chrome":
         activate_app("Google Chrome")
         time.sleep(0.35)
         active = (run_bridge([{"action": "GetActiveWindow"}])[-1].get("data") or {})
+    if active.get("app_name") != "Google Chrome":
+        return claude_failure_payload(
+            text=text,
+            phase="focus_sentry_tab" if wants_sentry else "focus_browser",
+            reason="Google Chrome is not frontmost.",
+            active=active,
+            current_url=current_url,
+            attempt_count=attempt_count,
+        )
+
+    if wants_sentry and not url_matches_target(current_url, SENTRY_URL):
+        return claude_failure_payload(
+            text=text,
+            phase="focus_sentry_tab",
+            reason="Failed to keep Sentry in the active Chrome tab.",
+            active=active,
+            current_url=current_url,
+            attempt_count=attempt_count,
+            extra_data={"expected_url": SENTRY_URL},
+        )
 
     sentry_context = None
-    if wants_sentry and not url_matches_target(current_url, SENTRY_URL):
-        return {
-            "success": False,
-            "error": "Failed to focus the Sentry issues feed before opening Claude.",
-            "data": {"current_url": current_url, "expected_url": SENTRY_URL, "active_window": active},
-        }
-
-    if "sentry.io" in current_url and active.get("app_name") == "Google Chrome":
+    if wants_sentry and "sentry.io" in current_url:
         sentry_shot, sentry_ocr_text, sentry_page_hint = claude_browser_snapshot(active)
         sentry_titles = extract_issue_titles(sentry_ocr_text)
         sentry_context_parts = [
@@ -1864,112 +1938,185 @@ def claude_prompt_live(text: str) -> dict:
             sentry_context_parts.append("Visible issue titles: " + "; ".join(sentry_titles[:8]))
         sentry_context = "\n".join(part for part in sentry_context_parts if part)
         text = (
-            "Analyze the visible Sentry issues in the current browser tab. "
-            "Use the current page as the source of truth. "
-            "Reply with only the visible unresolved issues. "
-            "If there are none, say exactly: No unresolved issues match the current Sentry filter."
+            "Analyze the current Sentry issues page in this tab. "
+            "Summarize the visible unresolved issues. "
+            "If there are no unresolved issues, say exactly: No unresolved issues match the current Sentry filter."
         )
 
-    ok = False
-    screenshot = {"success": False}
-    ocr_text = ""
-    page_hint = "unknown"
-    if sentry_context is not None:
+    attempt_count += 1
+    if wants_sentry:
         ok, active = chrome_open_claude_sidepanel_on_current_tab()
     else:
         ok, active = chrome_open_claude_extension_panel()
-    if ok:
-        screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
     if not ok:
-        return {
-            "success": False,
-            "error": (
-                active.get("error")
-                or "Claude side panel did not open on the current Sentry tab."
-                if sentry_context is not None
-                else "Failed opening the Claude Chrome extension."
+        return claude_failure_payload(
+            text=text,
+            phase=str(active.get("failure_phase") or "attach_sidepanel"),
+            reason=str(
+                active.get("failure_reason")
+                or active.get("error")
+                or "Claude side panel did not open."
             ),
-            "data": {"active_window": active, "current_url": current_url},
-        }
-    if not ensure_frontmost_app("Google Chrome"):
-        return {
-            "success": False,
-            "error": "Google Chrome is not frontmost for Claude input.",
-            "data": {"active_window": active, "current_url": current_url},
-        }
-    if sentry_context is not None:
-        live_url = chrome_tab_value(
-            'tell application "Google Chrome" to get URL of active tab of front window'
-        ) or ""
-        if not url_matches_target(live_url, SENTRY_URL):
-            return {
-                "success": False,
-                "error": "Claude side panel opened on the wrong Chrome tab instead of the Sentry issues feed.",
-                "data": {"active_window": active, "current_url": live_url, "expected_url": SENTRY_URL},
-            }
-        if live_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/"):
-            return {
-                "success": False,
-                "error": "Claude side panel detached into its own tab instead of staying attached to Sentry.",
-                "data": {"active_window": active, "current_url": live_url},
-            }
-        stop_result = claude_stop_active_panel_if_needed(screenshot, ocr_text)
-        if stop_result.get("stopped"):
-            screenshot = screenshot_data()
-            ocr_text = ocr_image(str(screenshot.get("path") or ""))
-        if stop_result.get("ready") is False:
-            return {
-                "success": False,
-                "error": stop_result.get("error") or "Claude side panel is still busy and did not return to an idle composer.",
-                "data": {
-                    "active_window": active,
-                    "current_url": live_url,
-                    "stop_result": stop_result,
-                },
-            }
+            active=active,
+            current_url=str(active.get("current_url") or current_url),
+            attempt_count=int(active.get("attempt_count") or attempt_count),
+            attached=bool(active.get("claude_attached")),
+            extra_data={"sentry_context": sentry_context},
+        )
+
+    live_url = chrome_tab_value(
+        'tell application "Google Chrome" to get URL of active tab of front window'
+    ) or ""
+    attached = bool(active.get("claude_attached"))
+    if live_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/"):
+        return claude_failure_payload(
+            text=text,
+            phase="attach_sidepanel",
+            reason="Claude side panel detached into a standalone extension tab.",
+            active=active,
+            current_url=live_url,
+            attempt_count=int(active.get("attempt_count") or attempt_count),
+            attached=False,
+            extra_data={"sentry_context": sentry_context},
+        )
+    if wants_sentry and not url_matches_target(live_url, SENTRY_URL):
+        return claude_failure_payload(
+            text=text,
+            phase="attach_sidepanel",
+            reason="Claude side panel opened on the wrong tab.",
+            active=active,
+            current_url=live_url,
+            attempt_count=int(active.get("attempt_count") or attempt_count),
+            attached=attached,
+            extra_data={"expected_url": SENTRY_URL, "sentry_context": sentry_context},
+        )
+    if wants_sentry and not attached:
+        return claude_failure_payload(
+            text=text,
+            phase="attach_sidepanel",
+            reason="Claude side panel is not attached to the Sentry tab.",
+            active=active,
+            current_url=live_url,
+            attempt_count=int(active.get("attempt_count") or attempt_count),
+            attached=False,
+            extra_data={"sentry_context": sentry_context},
+        )
+
+    screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+    stop_result = claude_stop_active_panel_if_needed(screenshot, ocr_text)
+    if stop_result.get("stopped"):
+        screenshot = screenshot_data()
+        ocr_text = ocr_image(str(screenshot.get("path") or ""))
+    if stop_result.get("ready") is False:
+        return claude_failure_payload(
+            text=text,
+            phase="ready_panel",
+            reason=str(
+                stop_result.get("error")
+                or "Claude side panel is busy and did not return to an idle composer."
+            ),
+            active=active,
+            current_url=live_url,
+            attempt_count=int(active.get("attempt_count") or attempt_count),
+            attached=attached,
+            extra_data={"stop_result": stop_result, "sentry_context": sentry_context},
+        )
+
+    attempt_count += 1
+    if wants_sentry:
         typed_result = claude_attached_panel_type_and_send(text, screenshot)
     else:
         typed_result = claude_type_and_send(text, screenshot)
-    typed = bool(typed_result.get("success"))
-    time.sleep(2.0)
-    post_screenshot, post_ocr_text, post_page_hint = claude_browser_snapshot(active)
-    lower_post = post_ocr_text.lower()
-    normalized_text = " ".join(text.lower().split())
-    prompt_cleared = normalized_text[:48] not in lower_post
-    placeholder_gone = "type / for commands" not in lower_post and "how can i help you today?" not in lower_post
-    conversation_started = post_page_hint in {"claude_live", "claude_extension_panel", "claude_extension"} and (
-        prompt_cleared
-        and (
-            "thinking" in lower_post
-            or "analyzing" in lower_post
-            or "stop" in lower_post
-            or "continue" in lower_post
-            or "retry" in lower_post
-            or "copy" in lower_post
-            or "edit" in lower_post
-            or "reply..." in lower_post
-            or "thinking about" in lower_post
-            or placeholder_gone
+    if not bool(typed_result.get("success")):
+        return claude_failure_payload(
+            text=text,
+            phase="submit",
+            reason="Failed typing or sending the Claude prompt through the side panel.",
+            active=active,
+            current_url=live_url,
+            attempt_count=attempt_count,
+            attached=attached,
+            response_started=bool(typed_result.get("response_started")),
+            extra_data={"type_result": typed_result, "sentry_context": sentry_context},
         )
-    )
+
+    post_screenshot, post_ocr_text, post_page_hint = claude_browser_snapshot(active)
+    normalized_text = " ".join(text.lower().split())
+    prompt_cleared = normalized_text[:48] not in " ".join(post_ocr_text.lower().split())
+    response_started = bool(typed_result.get("response_started"))
+    if not response_started:
+        lower_post = post_ocr_text.lower()
+        response_started = any(
+            token in lower_post
+            for token in (
+                "thinking",
+                "analyzing",
+                "stop claude",
+                "continue",
+                "reply...",
+                "copy",
+                "retry",
+            )
+        ) and prompt_cleared
+    if not prompt_cleared:
+        return claude_failure_payload(
+            text=text,
+            phase="submit",
+            reason="Prompt is still visible in the composer after submit.",
+            active=active,
+            current_url=live_url,
+            attempt_count=attempt_count,
+            attached=attached,
+            response_started=response_started,
+            extra_data={
+                "post_screenshot_path": post_screenshot.get("path"),
+                "post_ocr_excerpt": post_ocr_text[:1500],
+                "type_result": typed_result,
+                "sentry_context": sentry_context,
+            },
+        )
+    if not response_started:
+        return claude_failure_payload(
+            text=text,
+            phase="response_wait",
+            reason="Claude did not start responding after submit.",
+            active=active,
+            current_url=live_url,
+            attempt_count=attempt_count,
+            attached=attached,
+            response_started=False,
+            extra_data={
+                "post_screenshot_path": post_screenshot.get("path"),
+                "post_ocr_excerpt": post_ocr_text[:1500],
+                "type_result": typed_result,
+                "sentry_context": sentry_context,
+            },
+        )
+
     payload = claude_state_payload(
         active,
         screenshot_path=str(post_screenshot.get("path") or screenshot.get("path") or ""),
         ocr_text=post_ocr_text or ocr_text,
         page_hint_override=post_page_hint or page_hint,
     )
-    sent_success = typed and prompt_cleared
-    payload["success"] = bool(conversation_started or sent_success)
+    payload["success"] = True
+    payload["failure_phase"] = None
+    payload["failure_reason"] = None
+    payload["response_started"] = True
+    payload["attempt_count"] = attempt_count
     payload["data"]["active_window"] = active
     payload["data"]["typed_text"] = text
     payload["data"]["sentry_context"] = sentry_context
-    payload["data"]["sent"] = typed
-    payload["data"]["conversation_started"] = conversation_started
-    payload["data"]["prompt_cleared"] = prompt_cleared
+    payload["data"]["sent"] = True
+    payload["data"]["conversation_started"] = True
+    payload["data"]["prompt_cleared"] = True
     payload["data"]["type_result"] = typed_result
     payload["data"]["claude_response_excerpt"] = typed_result.get("claude_response_excerpt")
-    if not typed:
-        payload["error"] = "Failed typing or sending the Claude prompt through the sidepanel."
+    payload["data"]["failure_phase"] = None
+    payload["data"]["failure_reason"] = None
+    payload["data"]["attempt_count"] = attempt_count
+    payload["data"]["response_started"] = True
+    payload["data"]["claude.attached"] = attached
     return payload
 
 
