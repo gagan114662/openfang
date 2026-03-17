@@ -140,6 +140,12 @@ taskkill //PID <pid> //F
 - Dashboard is Alpine.js SPA in `static/index_body.html` — new tabs need both HTML and JS data/methods
 - Config fields need: struct field + `#[serde(default)]` + Default impl entry + Serialize/Deserialize derives
 
+## MANDATORY: Commit Before Ending Session
+**Every agent session MUST end with clean worktree.** The auto-commit hook handles this automatically on session-end, but if you're about to stop work:
+1. Run `python3 scripts/claude/auto_commit.py .` to save your work
+2. Never leave modified/untracked files uncommitted
+3. To switch branches safely: `git sw <branch>` (auto-commits first)
+
 ## Common Gotchas
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first
 - `PeerRegistry` is `Option<PeerRegistry>` on kernel but `Option<Arc<PeerRegistry>>` on `AppState` — wrap with `.as_ref().map(|r| Arc::new(r.clone()))`
