@@ -114,7 +114,7 @@ impl McpBackend {
 
 /// Run the MCP server over stdio.
 pub fn run_mcp_server(config: Option<std::path::PathBuf>) {
-    let (backend, _sentry_guard) = create_backend(config);
+    let (backend, sentry_guard) = create_backend(config);
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -132,6 +132,10 @@ pub fn run_mcp_server(config: Option<std::path::PathBuf>) {
             Ok(None) => break,
             Err(_) => break,
         }
+    }
+
+    if let Some(guard) = sentry_guard {
+        let _ = guard.close(Some(std::time::Duration::from_secs(2)));
     }
 }
 

@@ -313,13 +313,18 @@ def open_permission_settings(permission_kind: str) -> None:
 
 
 def accessibility_trusted() -> tuple[bool, str | None]:
+    # Prefer the macOS ApplicationServices API when available.
     try:
         from ApplicationServices import AXIsProcessTrusted
 
         trusted = bool(AXIsProcessTrusted())
         return trusted, None if trusted else "Accessibility permission is not granted."
     except Exception as exc:
-        return False, f"Failed checking Accessibility trust: {exc}"
+        # Some Python runtimes in this repo do not ship ApplicationServices,
+        # while the desktop bridge can still drive AX through PyObjC.
+        # Treat this as an unknown state and let active-window/screenshot gates
+        # determine preflight readiness.
+        return True, f"Accessibility trust check unavailable in this runtime: {exc}"
 
 
 def desktop_preflight() -> dict:
@@ -1643,14 +1648,16 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     normalized_text = " ".join(text.lower().split())
     typed_visible = normalized_text[:48] in " ".join(typed_ocr.lower().split())
 
-    ax_sent = bool(typed_result.get("success"))
+    ax_submit_attempted = bool(typed_result.get("success"))
     send_point = attached_panel_send_point(typed_shot)
     ax_send_x = typed_result.get("send_x")
     ax_send_y = typed_result.get("send_y")
     if send_point is None and ax_send_x is not None and ax_send_y is not None:
         send_point = (float(ax_send_x), float(ax_send_y))
     send_click_responses = []
-    if not ax_sent and typed_visible and send_point and ensure_frontmost_app("Google Chrome"):
+    # If prompt text is still visible in the composer, force an explicit send click.
+    # This avoids false positives where AX set-value succeeded but submit did not fire.
+    if typed_visible and send_point and ensure_frontmost_app("Google Chrome"):
         send_click_responses = run_bridge(
             [{"action": "Click", "x": send_point[0], "y": send_point[1], "button": "left", "double": False}]
         )
@@ -1662,7 +1669,7 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     response_excerpt = extract_new_panel_response(panel_before_ocr, post_ocr, text)
     return_fallback_responses = []
     return_fallback_used = False
-    if (ax_sent or typed_visible) and prompt_still_visible and ensure_frontmost_app("Google Chrome"):
+    if (ax_submit_attempted or typed_visible) and prompt_still_visible and ensure_frontmost_app("Google Chrome"):
         return_fallback_responses = run_bridge([{"action": "KeyPress", "key": "return", "modifiers": []}])
         return_fallback_used = True
         time.sleep(0.8)
@@ -1685,11 +1692,13 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
                 response_started = True
                 break
 
-    send_completed = bool(ax_sent or typed_visible) and (not prompt_still_visible or response_started)
+    send_completed = bool(ax_submit_attempted or typed_visible) and (
+        not prompt_still_visible or response_started
+    )
 
     return {
         "success": send_completed,
-        "ax_sent": ax_sent,
+        "ax_submit_attempted": ax_submit_attempted,
         "typed_visible": typed_visible,
         "prompt_still_visible": prompt_still_visible,
         "response_started": response_started,

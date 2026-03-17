@@ -108,6 +108,11 @@ pub struct DesktopOperatorObservation {
     pub claude_response_excerpt: Option<String>,
     pub recent_issue_titles: Vec<String>,
     pub login_required: bool,
+    pub failure_phase: Option<String>,
+    pub failure_reason: Option<String>,
+    pub claude_attached: Option<bool>,
+    pub attempt_count: Option<u64>,
+    pub response_started: Option<bool>,
     pub success: bool,
     pub error: Option<String>,
 }
@@ -430,6 +435,48 @@ impl DesktopOperatorManager {
         (phase, reason)
     }
 
+    fn parse_failure_metadata(details: &str) -> (Option<String>, Option<String>, Option<bool>, Option<u64>) {
+        let mut phase = None;
+        let mut reason = None;
+        let mut attached = None;
+        let mut attempt_count = None;
+        for part in details.split(';').map(str::trim) {
+            if let Some(rest) = part.strip_prefix("failure_phase=") {
+                phase = Some(rest.trim().to_string());
+            } else if let Some(rest) = part.strip_prefix("failure_reason=") {
+                reason = Some(rest.trim().to_string());
+            } else if let Some(rest) = part.strip_prefix("claude_attached=") {
+                attached = rest.trim().parse::<bool>().ok();
+            } else if let Some(rest) = part.strip_prefix("attempt_count=") {
+                attempt_count = rest.trim().parse::<u64>().ok();
+            }
+        }
+        (phase, reason, attached, attempt_count)
+    }
+
+    fn claude_phase_user_message(phase: Option<&str>, reason: Option<&str>) -> String {
+        match phase.unwrap_or("unknown") {
+            "preflight" => format!(
+                "Blocked before desktop control started: {}",
+                reason.unwrap_or("Desktop preflight failed.")
+            ),
+            "focus_sentry_tab" => "Failed focusing the Sentry issues tab in Chrome.".to_string(),
+            "attach_sidepanel" => {
+                "Failed attaching Claude to the right side panel on the Sentry tab.".to_string()
+            }
+            "ready_panel" => {
+                "Claude side panel is busy and did not return to an idle composer.".to_string()
+            }
+            "submit" => {
+                "Failed submitting the prompt from the attached Claude side panel.".to_string()
+            }
+            "response_wait" => "Claude did not start responding after submit.".to_string(),
+            _ => reason
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "Failed using Claude extension on this Mac.".to_string()),
+        }
+    }
+
     fn emit_claude_extension_lifecycle(
         &self,
         kind: &str,
@@ -462,9 +509,22 @@ impl DesktopOperatorManager {
                 "artifact.screenshot_path".to_string(),
                 json!(obs.screenshot_path.clone()),
             );
-            attrs.insert("claude.attached".to_string(), json!(obs.success));
+            attrs.insert(
+                "claude.attached".to_string(),
+                json!(obs.claude_attached.unwrap_or(false)),
+            );
+            attrs.insert(
+                "attempt_count".to_string(),
+                json!(obs.attempt_count.unwrap_or(1)),
+            );
+            if let Some(phase) = obs.failure_phase.clone() {
+                attrs.insert("failure_phase".to_string(), json!(phase));
+            }
+            if let Some(reason) = obs.failure_reason.clone() {
+                attrs.insert("failure_reason".to_string(), json!(reason));
+            }
             if let Some(error) = obs.error.as_deref() {
-                let (phase, reason) = Self::parse_failure_detail(error);
+                let (phase, reason, attached, attempts) = Self::parse_failure_metadata(error);
                 attrs.insert(
                     "failure_phase".to_string(),
                     json!(phase.unwrap_or_else(|| "unknown".to_string())),
@@ -473,10 +533,16 @@ impl DesktopOperatorManager {
                     "failure_reason".to_string(),
                     json!(reason.unwrap_or_else(|| error.to_string())),
                 );
+                if let Some(attached) = attached {
+                    attrs.insert("claude.attached".to_string(), json!(attached));
+                }
+                if let Some(attempts) = attempts {
+                    attrs.insert("attempt_count".to_string(), json!(attempts));
+                }
             }
         }
         if let Some(raw) = details {
-            let (phase, reason) = Self::parse_failure_detail(raw);
+            let (phase, reason, attached, attempts) = Self::parse_failure_metadata(raw);
             if !attrs.contains_key("failure_phase") {
                 attrs.insert(
                     "failure_phase".to_string(),
@@ -489,6 +555,21 @@ impl DesktopOperatorManager {
                     json!(reason.unwrap_or_else(|| raw.to_string())),
                 );
             }
+            if !attrs.contains_key("claude.attached") {
+                attrs.insert(
+                    "claude.attached".to_string(),
+                    json!(attached.unwrap_or(false)),
+                );
+            }
+            if !attrs.contains_key("attempt_count") {
+                attrs.insert("attempt_count".to_string(), json!(attempts.unwrap_or(1u64)));
+            }
+        }
+        if !attrs.contains_key("attempt_count") {
+            attrs.insert("attempt_count".to_string(), json!(1u64));
+        }
+        if !attrs.contains_key("claude.attached") {
+            attrs.insert("claude.attached".to_string(), json!(false));
         }
         capture_structured_log(level, kind, attrs);
     }
@@ -1539,6 +1620,15 @@ impl DesktopOperatorManager {
         let observation = match self.execute_action(chat_id, &plan) {
             Ok(observation) => observation,
             Err(err) => {
+                let transformed = if is_claude_flow {
+                    let (phase, reason) = Self::parse_failure_detail(&err.details);
+                    OperatorError::failed(
+                        Self::claude_phase_user_message(phase.as_deref(), reason.as_deref()),
+                        err.details,
+                    )
+                } else {
+                    err
+                };
                 if is_claude_flow {
                     self.emit_claude_extension_lifecycle(
                         "operator.claude_extension.failed",
@@ -1546,10 +1636,10 @@ impl DesktopOperatorManager {
                         chat_id,
                         &plan,
                         None,
-                        Some(&err.details),
+                        Some(&transformed.details),
                     );
                 }
-                return Err(err);
+                return Err(transformed);
             }
         };
         self.set_state(chat_id, DesktopOperatorState::Verifying);
@@ -1571,31 +1661,7 @@ impl DesktopOperatorManager {
                 "claude_analyze_sentry" => {
                     let detail = observation.error.clone().unwrap_or_default();
                     let (phase, parsed_reason) = Self::parse_failure_detail(&detail);
-                    match phase.as_deref() {
-                        Some("preflight") => format!(
-                            "Blocked before starting desktop control: {}",
-                            parsed_reason.unwrap_or_else(|| "Desktop preflight failed.".to_string())
-                        ),
-                        Some("focus_sentry_tab") => "Failed focusing the Sentry issues tab."
-                            .to_string(),
-                        Some("attach_sidepanel") => {
-                            "Failed attaching Claude to the right side panel on the Sentry tab."
-                                .to_string()
-                        }
-                        Some("ready_panel") => {
-                            "Claude side panel is busy and did not return to an idle composer."
-                                .to_string()
-                        }
-                        Some("submit") => {
-                            "Failed sending the Claude prompt from the attached side panel."
-                                .to_string()
-                        }
-                        Some("response_wait") => {
-                            "Claude did not start responding after the prompt was submitted."
-                                .to_string()
-                        }
-                        _ => "Failed using the Claude extension to analyze Sentry.".to_string(),
-                    }
+                    Self::claude_phase_user_message(phase.as_deref(), parsed_reason.as_deref())
                 }
                 "open_codex" => "Failed opening Codex.".to_string(),
                 "screen_record" => "Failed recording the screen.".to_string(),
@@ -1765,6 +1831,11 @@ impl DesktopOperatorManager {
             claude_response_excerpt: None,
             recent_issue_titles: Vec::new(),
             login_required: false,
+            failure_phase: None,
+            failure_reason: None,
+            claude_attached: None,
+            attempt_count: None,
+            response_started: None,
         })
     }
 
@@ -1866,6 +1937,28 @@ impl DesktopOperatorManager {
                         .unwrap_or_default()
                         .to_lowercase()
                         .contains("login with google")),
+            failure_phase: value
+                .get("failure_phase")
+                .or_else(|| data.get("failure_phase"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            failure_reason: value
+                .get("failure_reason")
+                .or_else(|| data.get("failure_reason"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            claude_attached: data
+                .get("claude.attached")
+                .or_else(|| data.get("claude_attached"))
+                .and_then(Value::as_bool),
+            attempt_count: value
+                .get("attempt_count")
+                .or_else(|| data.get("attempt_count"))
+                .and_then(Value::as_u64),
+            response_started: value
+                .get("response_started")
+                .or_else(|| data.get("response_started"))
+                .and_then(Value::as_bool),
             success: value
                 .get("success")
                 .and_then(Value::as_bool)
@@ -1965,7 +2058,36 @@ impl DesktopOperatorManager {
             .args(args)
             .output()
             .map_err(|e| format!("desktop helper failed to start: {e}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !output.status.success() {
+            if !stdout.is_empty() {
+                if let Ok(value) = serde_json::from_str::<Value>(&stdout) {
+                    let phase = value
+                        .get("failure_phase")
+                        .or_else(|| value.get("data").and_then(|d| d.get("failure_phase")))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let reason = value
+                        .get("failure_reason")
+                        .or_else(|| value.get("data").and_then(|d| d.get("failure_reason")))
+                        .or_else(|| value.get("error"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("desktop helper failed");
+                    let attached = value
+                        .get("data")
+                        .and_then(|d| d.get("claude.attached"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let attempt_count = value
+                        .get("attempt_count")
+                        .or_else(|| value.get("data").and_then(|d| d.get("attempt_count")))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1);
+                    return Err(format!(
+                        "failure_phase={phase}; failure_reason={reason}; claude_attached={attached}; attempt_count={attempt_count}"
+                    ));
+                }
+            }
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if stderr.is_empty() {
                 return Err(format!(
@@ -1975,7 +2097,7 @@ impl DesktopOperatorManager {
             }
             return Err(stderr);
         }
-        serde_json::from_slice(&output.stdout)
+        serde_json::from_str(&stdout)
             .map_err(|e| format!("invalid desktop helper output: {e}"))
     }
 

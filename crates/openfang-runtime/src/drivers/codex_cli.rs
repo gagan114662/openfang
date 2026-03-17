@@ -57,7 +57,11 @@ async fn run_codex_streaming(
     model: Option<&str>,
     parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>>,
 ) -> Result<CompletionResponse, LlmError> {
-    let mut args = vec!["exec".to_string(), "--json".to_string()];
+    let mut args = vec![
+        "exec".to_string(),
+        "--json".to_string(),
+        "--skip-git-repo-check".to_string(),
+    ];
     if let Some(model) = model {
         args.push("--model".to_string());
         args.push(model.to_string());
