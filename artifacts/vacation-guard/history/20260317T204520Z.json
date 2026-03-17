@@ -1,7 +1,7 @@
 {
   "actions": [],
   "errors": [],
-  "generated_at": "2026-03-17T20:50:21.994377+00:00",
+  "generated_at": "2026-03-17T20:45:20.246992+00:00",
   "local": {
     "agent_count": 15,
     "health_body": {
@@ -10,7 +10,7 @@
     },
     "health_status_code": 200,
     "health_url": "http://127.0.0.1:50051/api/health",
-    "heartbeat_request_id": "9181d3c5-5732-4c20-b5f8-a8fdb0be0a3e",
+    "heartbeat_request_id": "e277cf28-85e6-4fdf-9582-6c8f57cbf93e",
     "heartbeat_status_code": 200,
     "heartbeat_url": "http://127.0.0.1:50051/api/status",
     "pid": "2066"
@@ -36,10 +36,10 @@
     }
   },
   "sentry": {
-    "expected_query": "event.kind:api.request request.id:9181d3c5-5732-4c20-b5f8-a8fdb0be0a3e",
+    "expected_query": "event.kind:api.request request.id:e277cf28-85e6-4fdf-9582-6c8f57cbf93e",
     "guard_report_body": {
       "dropped_fields": 0,
-      "event_id": "9b516ae6-56ed-4797-a9f8-ac0ea21dabdd",
+      "event_id": "4d2c461f-d048-43cd-87fb-bd012fdfcf30",
       "event_kind": "ops.guard.heartbeat",
       "outcome": "success",
       "serialized_bytes": 2764,
