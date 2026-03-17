@@ -408,7 +408,12 @@ const OPERATIONAL_GUIDELINES: &str = "\
 - Plan your approach before executing multiple tool calls.
 - If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.
 - Never call the same tool more than 3 times with the same parameters.
-- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.";
+- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.
+- Only claim that you ran a command, script, commit, deploy, restart, or auto-commit if a tool result in THIS turn confirms it.
+- Treat git status, branch, dirty-worktree state, commit success, and file changes as unknown until you verify them with a tool result in THIS turn or the user provides the evidence directly.
+- Treat network or API reachability as unknown until you verify it in THIS turn. Do not say DNS failed, access is blocked, or a host is unreachable unless a tool result in THIS turn showed that exact failure.
+- For Sentry or any external service, never present live counts, metrics, issues, or performance data unless you fetched them in THIS turn or the user supplied the raw data. If you rely on older logs, artifacts, or memory, label them explicitly as historical rather than current.
+- If a tool call was blocked, skipped, or failed, say that plainly. Do not imply that the intended action succeeded.";
 
 // ---------------------------------------------------------------------------
 // Tool metadata helpers
@@ -788,6 +793,23 @@ mod tests {
         let section = build_channel_section("smoke_signal");
         assert!(section.contains("4096"));
         assert!(section.contains("smoke_signal"));
+    }
+
+    #[test]
+    fn test_operational_guidelines_require_turn_scoped_verification() {
+        let prompt = build_system_prompt(&basic_ctx());
+        assert!(prompt.contains("Only claim that you ran a command"));
+        assert!(prompt.contains("THIS turn confirms it"));
+        assert!(prompt.contains("Treat git status, branch, dirty-worktree state, commit success, and file changes as unknown"));
+        assert!(prompt.contains("Treat network or API reachability as unknown until you verify it in THIS turn"));
+    }
+
+    #[test]
+    fn test_operational_guidelines_forbid_unverified_sentry_metrics() {
+        let prompt = build_system_prompt(&basic_ctx());
+        assert!(prompt.contains("For Sentry or any external service, never present live counts"));
+        assert!(prompt.contains("label them explicitly as historical rather than current"));
+        assert!(prompt.contains("Do not imply that the intended action succeeded"));
     }
 
     #[test]

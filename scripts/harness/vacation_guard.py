@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+DEFAULT_GUARD_DIR = Path.home() / ".openfang" / "artifacts" / "vacation-guard"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check live OpenFang health and poller ownership")
     parser.add_argument("--api-base", default="http://127.0.0.1:50051", help="Local OpenFang API base URL")
@@ -57,12 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ssh-timeout-secs", type=int, default=8, help="SSH connect timeout")
     parser.add_argument(
         "--out",
-        default="artifacts/vacation-guard/latest.json",
+        default=str(DEFAULT_GUARD_DIR / "latest.json"),
         help="Latest report path",
     )
     parser.add_argument(
         "--history-dir",
-        default="artifacts/vacation-guard/history",
+        default=str(DEFAULT_GUARD_DIR / "history"),
         help="Directory for timestamped report history",
     )
     parser.add_argument(

@@ -127,6 +127,19 @@ def _as_bool(value: Any) -> bool:
     return False
 
 
+def _parse_int_csv(value: str) -> List[int]:
+    out: List[int] = []
+    for raw in value.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            out.append(int(token))
+        except Exception:
+            continue
+    return out
+
+
 def _is_actionable(finding: Dict[str, Any]) -> bool:
     if "actionable" in finding:
         return bool(finding.get("actionable"))
@@ -284,6 +297,11 @@ def main() -> int:
             trusted_app_ids.add(int(app_id))
         except Exception:
             continue
+    trusted_app_ids_env = str(github_cfg.get("trustedAppIdsEnv", "") or "").strip()
+    if trusted_app_ids_env:
+        env_value = os.getenv(trusted_app_ids_env, "").strip()
+        for app_id in _parse_int_csv(env_value):
+            trusted_app_ids.add(app_id)
 
     marker = str(github_cfg.get("commentMarker", DEFAULT_MARKER) or DEFAULT_MARKER)
     require_head_sha_match = _as_bool(github_cfg.get("requireHeadShaMatch", True))
@@ -302,6 +320,11 @@ def main() -> int:
             "ignored_untrusted": 0,
             "ignored_stale": 0,
             "parse_errors": 0,
+        },
+        "trusted_sources": {
+            "actor_logins": sorted(trusted_logins),
+            "app_ids": sorted(trusted_app_ids),
+            "app_ids_env": trusted_app_ids_env or None,
         },
         "errors": [],
     }
@@ -381,7 +404,12 @@ def main() -> int:
     findings.sort(key=lambda item: (str(item.get("path", "")), int(item.get("line", 1)), str(item.get("id", ""))))
 
     result["findings"] = findings
-    result["status"] = "success"
+    parsed_comments = int(result["ingestion_metrics"].get("parsed_comments", 0) or 0)
+    if parsed_comments > 0:
+        result["status"] = "success"
+    else:
+        result["status"] = "missing"
+        result["errors"].append("no trusted current-head Claude feedback payload found")
 
     _write_json(args.out, result)
     print(json.dumps(result, indent=2, sort_keys=True))

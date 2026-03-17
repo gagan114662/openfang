@@ -91,9 +91,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--changed-files", required=True, help="changed_files.txt path")
     parser.add_argument("--risk-report", required=True, help="risk-policy-report.json path")
     parser.add_argument(
+        "--infra-preflight-report",
+        default="artifacts/infra-preflight-report.json",
+        help="infra-preflight-report.json path",
+    )
+    parser.add_argument(
+        "--live-provider-report",
+        default="artifacts/agent-evals/live-provider-report.json",
+        help="live-provider-report.json path",
+    )
+    parser.add_argument(
+        "--eval-results",
+        default="artifacts/agent-evals/eval-results.json",
+        help="eval-results.json path",
+    )
+    parser.add_argument(
         "--claude-findings",
         default="artifacts/claude-findings.json",
         help="Optional claude-findings.json path",
+    )
+    parser.add_argument(
+        "--sentry-validation-report",
+        default="artifacts/sentry-logs-validation.json",
+        help="sentry live validation report path",
     )
     parser.add_argument("--evidence-manifest", required=True, help="browser-evidence-manifest.json path")
     parser.add_argument("--head-sha", required=True, help="Head SHA under review")
@@ -113,7 +133,11 @@ def main() -> int:
     contract = load_contract(args.contract)
     changed_files = read_changed_files(args.changed_files)
     risk_report = _read_json(Path(args.risk_report), {})
+    infra_preflight_report = _read_json(Path(args.infra_preflight_report), {})
+    live_provider_report = _read_json(Path(args.live_provider_report), {})
+    eval_results = _read_json(Path(args.eval_results), {})
     claude_findings = _read_json(Path(args.claude_findings), {})
+    sentry_validation = _read_json(Path(args.sentry_validation_report), {})
     evidence = _read_json(Path(args.evidence_manifest), {})
 
     criterion_meta = _criterion_map(acceptance_model)
@@ -165,6 +189,13 @@ def main() -> int:
     greptile_report_state = review_states.get("greptile", {})
     if not isinstance(greptile_report_state, dict):
         greptile_report_state = {}
+    claude_report_state = review_states.get("claude", {})
+    if not isinstance(claude_report_state, dict):
+        claude_report_state = {}
+    actionable_by_provider = risk_report.get("actionable_findings_by_provider", {})
+    actionable_by_provider = actionable_by_provider if isinstance(actionable_by_provider, dict) else {}
+    greptile_actionable = int(actionable_by_provider.get("greptile", 0) or 0)
+    claude_actionable_from_report = int(actionable_by_provider.get("claude", 0) or 0)
     legacy_review_state = risk_report.get("review_state", {})
     if (
         not greptile_report_state
@@ -191,6 +222,7 @@ def main() -> int:
     greptile_run_status = str(greptile_run.get("status", "") or "missing")
     greptile_run_conclusion = str(greptile_run.get("conclusion", "") or "n/a")
     greptile_report_status = str(greptile_report_state.get("status", "") or "missing")
+    claude_report_status = str(claude_report_state.get("status", "") or "missing")
     greptile_report_url = str(greptile_report_state.get("check_run_url", "") or "").strip()
     greptile_run_url = str(greptile_run.get("html_url", "") or "").strip()
     greptile_url = greptile_report_url or greptile_run_url
@@ -206,8 +238,12 @@ def main() -> int:
     def verify_required_ci_signals() -> Tuple[bool, str]:
         failures = []
         details = []
+        non_checkrun_requirements = {"sentry-live-validate"}
         for check in required_checks:
             if check == required_check_name:
+                continue
+            if check in non_checkrun_requirements:
+                details.append(f"{check}=covered-via-artifact")
                 continue
             runs = check_runs_by_name.get(check, [])
             if not runs:
@@ -245,6 +281,41 @@ def main() -> int:
         ok = decision == "pass"
         return (ok, f"risk gate decision: {decision}")
 
+    def verify_review_providers_clean() -> Tuple[bool, str]:
+        greptile_ok = greptile_report_status == "success" and greptile_actionable == 0
+        claude_ok = claude_report_status == "success" and claude_actionable_from_report == 0
+        details = (
+            f"greptile(status={greptile_report_status}, actionable={greptile_actionable}); "
+            f"claude(status={claude_report_status}, actionable={claude_actionable_from_report})"
+        )
+        return (greptile_ok and claude_ok, details)
+
+    def verify_infra_preflight_pass() -> Tuple[bool, str]:
+        status = str(infra_preflight_report.get("status", "")).lower()
+        ok = status == "pass"
+        return (ok, f"infra preflight status: {status or 'missing'}")
+
+    def verify_live_provider_gate_pass() -> Tuple[bool, str]:
+        status = str(live_provider_report.get("status", "")).lower()
+        ok = status == "pass"
+        return (ok, f"live provider probe status: {status or 'missing'}")
+
+    def verify_agent_blocking_evals_pass() -> Tuple[bool, str]:
+        summary = eval_results.get("summary", {})
+        summary = summary if isinstance(summary, dict) else {}
+        failed = int(summary.get("failed", 0) or 0)
+        all_blocking_passed = _to_bool(summary.get("all_blocking_passed", failed == 0))
+        return (all_blocking_passed, f"blocking evals failed={failed}")
+
+    def verify_sentry_live_validation_pass() -> Tuple[bool, str]:
+        if "sentry-live-validate" not in set(required_checks):
+            return (True, "sentry live validation not required for this risk tier")
+        status = str(sentry_validation.get("status", "")).lower()
+        errors = sentry_validation.get("errors", [])
+        errors_count = len(errors) if isinstance(errors, list) else 0
+        ok = status == "success"
+        return (ok, f"sentry live validation status={status or 'missing'}, errors={errors_count}")
+
     def verify_ui_evidence_assertions() -> Tuple[bool, str]:
         shot = assertion_status.get("ui_screenshot_evidence", "")
         vid = assertion_status.get("ui_video_evidence", "")
@@ -273,9 +344,14 @@ def main() -> int:
         "minimum_screenshots": verify_minimum_screenshots,
         "minimum_videos": verify_minimum_videos,
         "no_harness_policy_violations": verify_policy_state,
+        "review_providers_clean": verify_review_providers_clean,
         "ui_evidence_assertions_pass": verify_ui_evidence_assertions,
         "api_runtime_validation_present": verify_api_runtime_validation,
         "docs_consistency_reviewed": verify_docs_consistency,
+        "infra_preflight_pass": verify_infra_preflight_pass,
+        "live_provider_gate_pass": verify_live_provider_gate_pass,
+        "agent_blocking_evals_pass": verify_agent_blocking_evals_pass,
+        "sentry_live_validation_pass": verify_sentry_live_validation_pass,
     }
 
     criteria_rows: List[Dict[str, Any]] = []
@@ -323,10 +399,19 @@ def main() -> int:
             "greptile": {
                 "check_run_name": greptile_check_name,
                 "report_status": greptile_report_status,
+                "actionable_findings": greptile_actionable,
                 "check_run_status": greptile_run_status,
                 "check_run_conclusion": greptile_run_conclusion,
                 "check_run_url": greptile_url,
             },
+            "claude": {
+                "report_status": claude_report_status,
+                "actionable_findings": claude_actionable_from_report,
+            },
+        },
+        "sentry_live_validation": {
+            "status": str(sentry_validation.get("status", "") or "missing"),
+            "errors": sentry_validation.get("errors", []),
         },
     }
 
@@ -362,6 +447,9 @@ def main() -> int:
             f"- Greptile check run: `{greptile_check_name}`",
             f"- Greptile report state: `{greptile_report_status}`",
             f"- Greptile check-run state: `{greptile_run_status}/{greptile_run_conclusion}`",
+            f"- Greptile actionable findings: `{greptile_actionable}`",
+            f"- Claude report state: `{claude_report_status}`",
+            f"- Claude actionable findings: `{claude_actionable_from_report}`",
         ]
     )
     if greptile_url:
@@ -387,7 +475,7 @@ def main() -> int:
         md_lines.extend(
             [
                 "",
-                "### Claude Advisory Feedback",
+                "### Claude Feedback",
                 "",
                 f"- Provider status: `{claude_status or 'missing'}`",
                 f"- Total findings: `{len(claude_items)}`",
@@ -407,6 +495,19 @@ def main() -> int:
         errors = claude_findings.get("errors", [])
         if isinstance(errors, list) and errors:
             md_lines.append(f"- Ingestion errors: `{len(errors)}` (see `claude-findings.json` artifact)")
+
+    sentry_status = str(sentry_validation.get("status", "") or "missing")
+    sentry_errors = sentry_validation.get("errors", [])
+    sentry_error_count = len(sentry_errors) if isinstance(sentry_errors, list) else 0
+    md_lines.extend(
+        [
+            "",
+            "### Sentry Live Validation",
+            "",
+            f"- Status: `{sentry_status}`",
+            f"- Errors: `{sentry_error_count}`",
+        ]
+    )
 
     checklist_md = "\n".join(md_lines) + "\n"
     comment_md = (

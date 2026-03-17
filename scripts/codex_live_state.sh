@@ -3,6 +3,7 @@ set -euo pipefail
 
 REMOTE_HOST="${REMOTE_HOST:-gagan-arora@192.168.40.234}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GUARD_LATEST_PATH="$HOME/.openfang/artifacts/vacation-guard/latest.json"
 LOCAL_PID="$(pgrep -f 'target/debug/openfang start|./target/debug/openfang start|openfang start' | head -n 1 || true)"
 
 echo "== Local =="
@@ -39,7 +40,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 "$REMOTE_HOST" '
   echo "-- remote established telegram sockets --"
   ss -tpn | grep -E "149\.154|91\.108" || true
   echo "-- remote latest guard artifact --"
-  tail -n 80 "$HOME"/open_fang/artifacts/vacation-guard/latest.json 2>/dev/null || true
+  tail -n 80 "'"$GUARD_LATEST_PATH"'" 2>/dev/null || true
   echo "-- remote latest autonomy state --"
   tail -n 120 "$HOME"/open_fang/artifacts/autonomy/current-state.json 2>/dev/null || true
   echo "-- remote unattended workload registry --"

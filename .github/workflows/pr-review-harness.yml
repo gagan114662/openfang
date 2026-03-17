@@ -134,6 +134,8 @@ jobs:
       gate_exit_code: ${{ steps.gate.outputs.exit_code }}
       eval_exit_code: ${{ steps.evals.outputs.exit_code }}
       evidence_exit_code: ${{ steps.verify.outputs.exit_code }}
+      sentry_required: ${{ steps.required_checks.outputs.require_sentry }}
+      sentry_exit_code: ${{ steps.sentry_validate.outputs.exit_code || '0' }}
       ui_impact: ${{ steps.ui.outputs.ui_impact }}
     steps:
       - uses: actions/checkout@v4
@@ -226,6 +228,21 @@ jobs:
           PY
           echo "risk_tier=$(cat /tmp/risk_tier.out)" >> "$GITHUB_OUTPUT"
 
+      - name: Determine required check coverage
+        id: required_checks
+        run: |
+          PYTHONPATH=scripts/harness python3 - <<'PY'
+          from checks_resolver import compute_required_checks, load_contract
+
+          contract = load_contract(".harness/policy.contract.json")
+          tier = "${{ steps.risk_tier.outputs.risk_tier }}"
+          required = compute_required_checks(contract, tier)
+          require_sentry = "sentry-live-validate" in set(required)
+          with open("/tmp/required_checks.out", "w", encoding="utf-8") as f:
+              f.write(f"require_sentry={'true' if require_sentry else 'false'}\n")
+          PY
+          cat /tmp/required_checks.out >> "$GITHUB_OUTPUT"
+
       - name: Run live provider probe
         id: live
         env:
@@ -289,7 +306,7 @@ jobs:
             --ui-impact "${{ steps.ui.outputs.ui_impact }}" \
             --playwright-json artifacts/playwright-evidence.json
 
-      - name: Ingest Claude feedback (advisory)
+      - name: Ingest Claude feedback
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -322,6 +339,55 @@ jobs:
             --live-provider-report artifacts/agent-evals/live-provider-report.json \
             --browser-evidence-manifest artifacts/browser-evidence-manifest.json \
             --report-out artifacts/risk-policy-report.json
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Run Sentry live validation
+        id: sentry_validate
+        if: ${{ steps.required_checks.outputs.require_sentry == 'true' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          OPENFANG_SENTRY_AUTH_TOKEN: ${{ secrets.OPENFANG_SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG_SLUG: ${{ vars.SENTRY_ORG_SLUG }}
+          OPENFANG_SENTRY_ORG: ${{ vars.OPENFANG_SENTRY_ORG }}
+          SENTRY_PROJECT_SLUG: ${{ vars.SENTRY_PROJECT_SLUG }}
+          OPENFANG_SENTRY_PROJECT: ${{ vars.OPENFANG_SENTRY_PROJECT }}
+          OPENFANG_API_BASE_URL: ${{ vars.OPENFANG_API_BASE_URL }}
+        run: |
+          mkdir -p artifacts
+          export SENTRY_AUTH_TOKEN="${SENTRY_AUTH_TOKEN:-$OPENFANG_SENTRY_AUTH_TOKEN}"
+          org="${SENTRY_ORG_SLUG:-$OPENFANG_SENTRY_ORG}"
+          project="${SENTRY_PROJECT_SLUG:-$OPENFANG_SENTRY_PROJECT}"
+          api_base="${OPENFANG_API_BASE_URL:-}"
+
+          if [ -z "$api_base" ] || [ -z "$org" ] || [ -z "$project" ] || [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = {
+              "status": "error",
+              "errors": [
+                  "missing OPENFANG_API_BASE_URL or Sentry org/project/auth config in workflow env",
+              ],
+          }
+          Path("artifacts/sentry-logs-validation.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          set +e
+          python3 scripts/harness/sentry_logs_live_validate.py \
+            --api-base "$api_base" \
+            --org "$org" \
+            --project "$project" \
+            --token-env "SENTRY_AUTH_TOKEN" \
+            --out artifacts/sentry-logs-validation.json
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -406,6 +472,7 @@ jobs:
             artifacts/agent-evals/eval-findings.json
             artifacts/agent-evals/eval-summary.md
             artifacts/agent-evals/eval-metrics.json
+            artifacts/sentry-logs-validation.json
             artifacts/browser-evidence-manifest.json
             artifacts/playwright-evidence.json
             artifacts/pr-review/evidence/
@@ -438,6 +505,7 @@ jobs:
           risk_report=$(find . -type f -name risk-policy-report.json | head -1 || true)
           infra_report=$(find . -type f -name infra-preflight-report.json | head -1 || true)
           live_report=$(find . -type f -name live-provider-report.json | head -1 || true)
+          sentry_report=$(find . -type f -name sentry-logs-validation.json | head -1 || true)
           evidence_manifest=$(find . -type f -name browser-evidence-manifest.json | head -1 || true)
           eval_results=$(find . -type f -name eval-results.json | head -1 || true)
           claude_findings=$(find . -type f -name claude-findings.json | head -1 || true)
@@ -454,6 +522,9 @@ jobs:
           fi
           if [ -n "$live_report" ]; then
             cp "$live_report" artifacts/agent-evals/live-provider-report.json
+          fi
+          if [ -n "$sentry_report" ]; then
+            cp "$sentry_report" artifacts/sentry-logs-validation.json
           fi
           if [ -n "$claude_findings" ]; then
             src_claude="$(realpath "$claude_findings")"
@@ -482,6 +553,7 @@ jobs:
             --live-provider-report artifacts/agent-evals/live-provider-report.json \
             --eval-results artifacts/agent-evals/eval-results.json \
             --claude-findings artifacts/claude-findings.json \
+            --sentry-validation-report artifacts/sentry-logs-validation.json \
             --evidence-manifest artifacts/browser-evidence-manifest.json \
             --head-sha "${{ needs.resolve-context.outputs.head_sha }}" \
             --repo "${{ github.repository }}" \
@@ -752,6 +824,11 @@ jobs:
 
           if [ "${{ needs.collect-evidence.outputs.evidence_exit_code }}" != "0" ]; then
             echo "Evidence verification failed."
+            exit 1
+          fi
+
+          if [ "${{ needs.collect-evidence.outputs.sentry_required }}" = "true" ] && [ "${{ needs.collect-evidence.outputs.sentry_exit_code }}" != "0" ]; then
+            echo "Sentry live validation failed."
             exit 1
           fi
 

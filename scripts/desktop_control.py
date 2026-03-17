@@ -863,12 +863,47 @@ let panelSignals = rightPane.contains {
         || hay.contains("stop claude")
 }
 let panelVisible = panelSignals || closeSidePanel || !textAreas.isEmpty
+let toolbarButtons = candidates.filter {
+    $0.role == "AXButton"
+        && $0.width > 0
+        && $0.y <= (windowPos.y + max(140.0, windowSize.height * 0.20))
+        && $0.x >= (windowPos.x + windowSize.width * 0.45)
+}
+let openCandidates = toolbarButtons.filter {
+    let hay = "\($0.title) \($0.desc)".lowercased()
+    return hay.contains("claude")
+        || hay.contains("side panel")
+        || hay.contains("open panel")
+        || hay.contains("toggle panel")
+}
+let openButton = openCandidates.sorted(by: {
+    if abs($0.x - $1.x) > 2 { return $0.x > $1.x }
+    if abs($0.y - $1.y) > 2 { return $0.y < $1.y }
+    return $0.width > $1.width
+}).first
+let toolbarPointPayload = toolbarButtons.sorted(by: {
+    if abs($0.x - $1.x) > 2 { return $0.x > $1.x }
+    if abs($0.y - $1.y) > 2 { return $0.y < $1.y }
+    return $0.width > $1.width
+}).prefix(8).map { button in
+    [
+        "x": button.x + (button.width * 0.5),
+        "y": button.y + (button.height * 0.5),
+        "label": "\(button.title) \(button.desc)".trimmingCharacters(in: .whitespacesAndNewlines),
+    ] as [String: Any]
+}
+
 let payload: [String: Any] = [
     "success": true,
     "panel_visible": panelVisible,
     "composer_found": !textAreas.isEmpty,
     "send_button_found": sendButton,
     "close_side_panel_found": closeSidePanel,
+    "open_button_found": openButton != nil,
+    "open_button_x": openButton != nil ? (openButton!.x + (openButton!.width * 0.5)) : NSNull(),
+    "open_button_y": openButton != nil ? (openButton!.y + (openButton!.height * 0.5)) : NSNull(),
+    "open_button_label": openButton != nil ? "\(openButton!.title) \(openButton!.desc)" : "",
+    "toolbar_button_points": toolbarPointPayload,
     "window_width": windowSize.width,
     "window_height": windowSize.height,
     "candidate_count": candidates.count,
@@ -1325,15 +1360,166 @@ def chrome_open_claude_extension_panel() -> tuple[bool, dict]:
     return False, active
 
 
-def chrome_open_claude_sidepanel_on_current_tab() -> tuple[bool, dict]:
+def chrome_open_claude_sidepanel_on_current_tab(expected_url: str | None = None) -> tuple[bool, dict]:
     activate_app("Google Chrome")
     time.sleep(0.35)
+    if expected_url:
+        chrome_set_front_tab_url(expected_url)
+        time.sleep(0.5)
     before_url = chrome_tab_value(
         'tell application "Google Chrome" to get URL of active tab of front window'
     ) or ""
     attempts = 3
     last_active: dict = {}
+
+    def evaluate_attempt_state(active: dict, screenshot: dict, ocr_text: str, page_hint: str, probe: dict, attempt: int) -> tuple[bool, dict]:
+        after_url = chrome_tab_value(
+            'tell application "Google Chrome" to get URL of active tab of front window'
+        ) or ""
+        detached = after_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/")
+        lower_ocr = (ocr_text or "").lower()
+        side_visible = bool(probe.get("panel_visible")) or sidepanel_hint_visible(page_hint, ocr_text)
+        if expected_url:
+            same_tab = url_matches_target(after_url, expected_url)
+        else:
+            same_tab = not before_url or after_url == before_url or url_matches_target(after_url, SENTRY_URL)
+        payload = dict(active)
+        payload["current_url"] = after_url
+        payload["before_url"] = before_url
+        payload["expected_url"] = expected_url
+        payload["attempt_count"] = attempt
+        payload["ax_probe"] = probe
+        payload["claude_attached"] = bool(
+            active.get("app_name") == "Google Chrome" and side_visible and same_tab and not detached
+        )
+        payload["screenshot_path"] = screenshot.get("path")
+        payload["page_text_excerpt"] = ocr_text[:3000]
+        if (
+            "claude.ai/oauth/authorize" in after_url
+            or "authorization failed" in lower_ocr
+            or "redirect uri" in lower_ocr
+        ):
+            payload["failure_phase"] = "attach_sidepanel"
+            payload["failure_reason"] = "Claude extension authorization is blocked on this Mac (OAuth redirect rejected)."
+            payload["error"] = payload["failure_reason"]
+            return False, payload
+        if detached:
+            payload["failure_phase"] = "attach_sidepanel"
+            payload["failure_reason"] = "Claude side panel detached into its own tab."
+            payload["error"] = payload["failure_reason"]
+            return False, payload
+        if active.get("app_name") != "Google Chrome":
+            payload["failure_phase"] = "focus_sentry_tab"
+            payload["failure_reason"] = "Google Chrome is not frontmost during side panel attach."
+            payload["error"] = payload["failure_reason"]
+            return False, payload
+        if side_visible and same_tab:
+            payload["page_hint"] = "claude_extension_panel"
+            return True, payload
+        return False, payload
+
+    # Fast path: panel may already be attached and ready.
+    if ensure_frontmost_app("Google Chrome", attempts=6, delay=0.25):
+        refreshed = run_bridge([{"action": "GetActiveWindow"}])
+        active = refreshed[-1].get("data") or {}
+        screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+        probe = claude_ax_probe()
+        ready, payload = evaluate_attempt_state(active, screenshot, ocr_text, page_hint, probe, 0)
+        if ready:
+            return True, payload
+        last_active = payload
+
     for attempt in range(1, attempts + 1):
+        if expected_url:
+            chrome_set_front_tab_url(expected_url)
+            time.sleep(0.35)
+        if not ensure_frontmost_app("Google Chrome", attempts=6, delay=0.25):
+            last_active = {
+                "attempt_count": attempt,
+                "failure_phase": "focus_sentry_tab",
+                "failure_reason": "Google Chrome could not be focused before attaching Claude.",
+                "claude_attached": False,
+                "expected_url": expected_url,
+            }
+            continue
+        refreshed = run_bridge([{"action": "GetActiveWindow"}])
+        active = refreshed[-1].get("data") or {}
+        screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+        probe = claude_ax_probe()
+        ready, payload = evaluate_attempt_state(active, screenshot, ocr_text, page_hint, probe, attempt)
+        last_active = payload
+        if payload.get("failure_phase") == "attach_sidepanel" and payload.get("failure_reason"):
+            return False, payload
+        if ready:
+            return True, payload
+
+        open_button_x = probe.get("open_button_x")
+        open_button_y = probe.get("open_button_y")
+        if (
+            bool(probe.get("open_button_found"))
+            and isinstance(open_button_x, (int, float))
+            and isinstance(open_button_y, (int, float))
+        ):
+            run_bridge(
+                [
+                    {
+                        "action": "Click",
+                        "x": float(open_button_x),
+                        "y": float(open_button_y),
+                        "button": "left",
+                        "double": False,
+                    }
+                ]
+            )
+            time.sleep(0.9)
+            refreshed = run_bridge([{"action": "GetActiveWindow"}])
+            active = refreshed[-1].get("data") or {}
+            screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+            probe = claude_ax_probe()
+            ready, payload = evaluate_attempt_state(active, screenshot, ocr_text, page_hint, probe, attempt)
+            last_active = payload
+            if payload.get("failure_phase") == "attach_sidepanel" and payload.get("failure_reason"):
+                return False, payload
+            if ready:
+                return True, payload
+
+        toolbar_points = probe.get("toolbar_button_points")
+        if isinstance(toolbar_points, list) and toolbar_points:
+            for point in toolbar_points[:6]:
+                px = point.get("x") if isinstance(point, dict) else None
+                py = point.get("y") if isinstance(point, dict) else None
+                if not isinstance(px, (int, float)) or not isinstance(py, (int, float)):
+                    continue
+                run_bridge(
+                    [
+                        {
+                            "action": "Click",
+                            "x": float(px),
+                            "y": float(py),
+                            "button": "left",
+                            "double": False,
+                        }
+                    ]
+                )
+                time.sleep(0.7)
+                if expected_url:
+                    current = chrome_tab_value(
+                        'tell application "Google Chrome" to get URL of active tab of front window'
+                    ) or ""
+                    if not url_matches_target(current, expected_url):
+                        chrome_set_front_tab_url(expected_url)
+                        time.sleep(0.35)
+                refreshed = run_bridge([{"action": "GetActiveWindow"}])
+                active = refreshed[-1].get("data") or {}
+                screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
+                probe = claude_ax_probe()
+                ready, payload = evaluate_attempt_state(active, screenshot, ocr_text, page_hint, probe, attempt)
+                last_active = payload
+                if payload.get("failure_phase") == "attach_sidepanel" and payload.get("failure_reason"):
+                    return False, payload
+                if ready:
+                    return True, payload
+
         subprocess.run(
             [
                 "osascript",
@@ -1349,31 +1535,27 @@ def chrome_open_claude_sidepanel_on_current_tab() -> tuple[bool, dict]:
         active = refreshed[-1].get("data") or {}
         screenshot, ocr_text, page_hint = claude_browser_snapshot(active)
         probe = claude_ax_probe()
-        after_url = chrome_tab_value(
-            'tell application "Google Chrome" to get URL of active tab of front window'
-        ) or ""
-        detached = after_url.startswith(f"chrome-extension://{CLAUDE_EXTENSION_ID}/")
-        side_visible = bool(probe.get("panel_visible")) or sidepanel_hint_visible(page_hint, ocr_text)
-        same_tab = not before_url or after_url == before_url or url_matches_target(after_url, SENTRY_URL)
-        last_active = dict(active)
-        last_active["current_url"] = after_url
-        last_active["before_url"] = before_url
-        last_active["attempt_count"] = attempt
-        last_active["ax_probe"] = probe
-        last_active["claude_attached"] = bool(side_visible and same_tab and not detached)
-        last_active["screenshot_path"] = screenshot.get("path")
-        last_active["page_text_excerpt"] = ocr_text[:3000]
-        if detached:
-            last_active["failure_phase"] = "attach_sidepanel"
-            last_active["failure_reason"] = "Claude side panel detached into its own tab."
-            last_active["error"] = last_active["failure_reason"]
-            return False, last_active
-        if side_visible and same_tab:
-            last_active["page_hint"] = "claude_extension_panel"
-            return True, last_active
+        ready, payload = evaluate_attempt_state(active, screenshot, ocr_text, page_hint, probe, attempt)
+        last_active = payload
+        if payload.get("failure_phase") == "attach_sidepanel" and payload.get("failure_reason"):
+            return False, payload
+        if ready:
+            return True, payload
     if last_active:
         last_active["failure_phase"] = "attach_sidepanel"
-        last_active["failure_reason"] = "Claude side panel did not attach to the active Sentry tab."
+        probe = last_active.get("ax_probe") if isinstance(last_active.get("ax_probe"), dict) else {}
+        if (
+            isinstance(probe, dict)
+            and not bool(probe.get("panel_visible"))
+            and not bool(probe.get("composer_found"))
+            and not bool(probe.get("open_button_found"))
+        ):
+            last_active["failure_reason"] = (
+                "Claude side panel control was not discoverable in Chrome. "
+                "Pin Claude in the toolbar or bind the extension command to Command+E."
+            )
+        else:
+            last_active["failure_reason"] = "Claude side panel did not attach to the active Sentry tab."
         last_active["error"] = last_active["failure_reason"]
     return False, last_active
 
@@ -1670,23 +1852,27 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     ax_send_y = typed_result.get("send_y")
     if send_point is None and ax_send_x is not None and ax_send_y is not None:
         send_point = (float(ax_send_x), float(ax_send_y))
-    send_click_responses = []
-    # If prompt text is still visible in the composer, force an explicit send click.
-    # This avoids false positives where AX set-value succeeded but submit did not fire.
-    if typed_visible and send_point and ensure_frontmost_app("Google Chrome"):
-        send_click_responses = run_bridge(
-            [{"action": "Click", "x": send_point[0], "y": send_point[1], "button": "left", "double": False}]
-        )
-        time.sleep(0.6)
+    initial_submit_responses = []
+    if typed_visible and ensure_frontmost_app("Google Chrome"):
+        # Primary submit path for attached panel: press Return while composer is focused.
+        initial_submit_responses = run_bridge([{"action": "KeyPress", "key": "return", "modifiers": []}])
+        time.sleep(0.7)
 
     post_shot = screenshot_data()
     post_ocr = claude_panel_ocr_text(post_shot)
     prompt_still_visible = normalized_text[:48] in " ".join(post_ocr.lower().split())
     response_excerpt = extract_new_panel_response(panel_before_ocr, post_ocr, text)
+    send_click_responses = []
+
     return_fallback_responses = []
     return_fallback_used = False
     if (ax_submit_attempted or typed_visible) and prompt_still_visible and ensure_frontmost_app("Google Chrome"):
-        return_fallback_responses = run_bridge([{"action": "KeyPress", "key": "return", "modifiers": []}])
+        return_fallback_responses = run_bridge(
+            [
+                {"action": "KeyPress", "key": "escape", "modifiers": []},
+                {"action": "KeyPress", "key": "return", "modifiers": []},
+            ]
+        )
         return_fallback_used = True
         time.sleep(0.8)
         post_shot = screenshot_data()
@@ -1720,6 +1906,7 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
         "response_started": response_started,
         "claude_response_excerpt": response_excerpt,
         "send_point": send_point,
+        "initial_submit_responses": initial_submit_responses,
         "send_click_responses": send_click_responses,
         "return_fallback_used": return_fallback_used,
         "return_fallback_responses": return_fallback_responses,
@@ -1970,7 +2157,7 @@ def claude_prompt_live(text: str) -> dict:
 
     attempt_count += 1
     if wants_sentry:
-        ok, active = chrome_open_claude_sidepanel_on_current_tab()
+        ok, active = chrome_open_claude_sidepanel_on_current_tab(expected_url=SENTRY_URL)
     else:
         ok, active = chrome_open_claude_extension_panel()
     if not ok:

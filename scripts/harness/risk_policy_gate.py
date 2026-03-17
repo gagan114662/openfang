@@ -64,6 +64,16 @@ def parse_args() -> argparse.Namespace:
         help="Browser evidence manifest path",
     )
     parser.add_argument(
+        "--infra-preflight-report",
+        default="artifacts/infra-preflight-report.json",
+        help="Infra preflight report path",
+    )
+    parser.add_argument(
+        "--live-provider-report",
+        default="artifacts/agent-evals/live-provider-report.json",
+        help="Live provider probe report path",
+    )
+    parser.add_argument(
         "--report-out",
         default="artifacts/risk-policy-report.json",
         help="Output path for risk-policy-report.json",
@@ -80,6 +90,17 @@ def _write_json(path: str, payload: Dict[str, Any]) -> None:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_json(path: str, default: Dict[str, Any]) -> Dict[str, Any]:
+    file_path = Path(path)
+    if not file_path.exists():
+        return default
+    try:
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+    return payload if isinstance(payload, dict) else default
 
 
 def _as_bool(value: Any) -> bool:
@@ -213,12 +234,13 @@ def main() -> int:
 
     mode, primary_provider, provider_cfg_map = _normalize_provider_settings(contract)
     primary_cfg = provider_cfg_map.get(primary_provider, {})
+    primary_enforcement = str(primary_cfg.get("enforcement", "required") or "required").lower()
 
     check_name = str(primary_cfg.get("checkRunName", "greptile-review"))
     timeout_minutes = _as_int(primary_cfg.get("timeoutMinutes"), 20)
     weak_confidence = _as_float(primary_cfg.get("weakConfidenceThreshold"), 0.55)
     keywords = [str(k).lower() for k in primary_cfg.get("actionableSummaryKeywords", [])]
-    enforce_review_state = bool(rollout_settings.get("enforceReviewState", False))
+    enforce_review_state = bool(rollout_settings.get("enforceReviewState", False)) or primary_enforcement != "advisory"
 
     token = os.getenv(args.token_env, "")
     review_state: ReviewState
@@ -273,6 +295,7 @@ def main() -> int:
     claude_cfg = provider_cfg_map.get("claude", {}) if isinstance(provider_cfg_map.get("claude"), dict) else {}
     claude_enabled = _as_bool(claude_cfg.get("enabled", False))
     claude_enforcement = str(claude_cfg.get("enforcement", "advisory") or "advisory").lower()
+    claude_require_ingestion = _as_bool(claude_cfg.get("requireCurrentHeadIngestion", claude_enforcement != "advisory"))
 
     claude_findings = _load_findings_artifact(args.claude_findings, head_sha=args.head_sha, provider="claude")
     claude_state: ReviewState | None = None
@@ -333,15 +356,33 @@ def main() -> int:
             decision = "fail"
 
     if actionable_findings_count > 0:
-        if enable_remediation:
+        if primary_enforcement == "advisory":
+            record_reason(
+                f"{actionable_findings_count} actionable review finding(s) detected",
+                enforced=False,
+            )
+        elif enable_remediation:
             record_reason(f"{actionable_findings_count} actionable review finding(s) detected", enforced=True)
             if decision == "pass":
                 decision = "needs-remediation"
         else:
             record_reason(
                 f"{actionable_findings_count} actionable review finding(s) detected",
-                enforced=False,
+                enforced=True,
             )
+            if decision == "pass":
+                decision = "fail"
+
+    if claude_enabled and claude_state is not None:
+        claude_status = str(claude_state.status or "missing")
+    else:
+        claude_status = "missing"
+
+    if claude_enabled and claude_status != "success":
+        enforced = claude_enforcement != "advisory" or claude_require_ingestion
+        record_reason(f"claude review state is '{claude_status}' on current head SHA", enforced=enforced)
+        if enforced and decision == "pass":
+            decision = "fail"
 
     if claude_actionable_count > 0:
         message = f"{claude_actionable_count} actionable claude finding(s) detected"
@@ -355,8 +396,6 @@ def main() -> int:
             record_reason(message, enforced=True)
             if decision == "pass":
                 decision = "fail"
-    elif claude_enabled and claude_state is not None and claude_state.status == "error":
-        record_reason("claude feedback ingestion returned error status", enforced=False)
 
     if docs_violations:
         for violation in docs_violations:

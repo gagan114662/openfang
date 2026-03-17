@@ -2,7 +2,7 @@ name: claude-remediation-agent
 
 on:
   pull_request:
-    types: [labeled, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -29,7 +29,6 @@ jobs:
       head_repo: ${{ steps.ctx.outputs.head_repo }}
       head_ref: ${{ steps.ctx.outputs.head_ref }}
       is_fork: ${{ steps.ctx.outputs.is_fork }}
-      labels_csv: ${{ steps.ctx.outputs.labels_csv }}
       should_run: ${{ steps.ctx.outputs.should_run }}
     steps:
       - name: Resolve PR context
@@ -73,7 +72,6 @@ jobs:
             const headRepo = String(pr.head.repo.full_name);
             const headRef = String(pr.head.ref);
             const isFork = headRepo !== `${owner}/${repo}`;
-            const labels = (pr.labels || []).map((label) => String(label.name || ''));
             const shouldRun = true;
 
             core.setOutput('pr_number', String(prNumber));
@@ -81,7 +79,6 @@ jobs:
             core.setOutput('head_repo', headRepo);
             core.setOutput('head_ref', headRef);
             core.setOutput('is_fork', String(isFork));
-            core.setOutput('labels_csv', labels.join(','));
             core.setOutput('should_run', String(shouldRun));
 
   claude-remediation-agent:
@@ -163,34 +160,20 @@ jobs:
           contract = json.loads(Path('.harness/policy.contract.json').read_text(encoding='utf-8'))
           cfg = contract.get('automation', {}).get('claudeRemediation', {})
           enabled = bool(cfg.get('enabled', True))
-          trigger_label = str(cfg.get('triggerLabel', 'claude-remediate'))
+          run_on_every_sync = bool(cfg.get('runOnEverySync', True))
+          require_findings_ingestion = bool(cfg.get('requireFindingsIngestion', True))
           max_attempts = int(cfg.get('maxAttemptsPerSha', 1) or 1)
           with open('/tmp/claude_cfg.out', 'w', encoding='utf-8') as f:
               f.write(f'enabled={str(enabled).lower()}\n')
-              f.write(f'trigger_label={trigger_label}\n')
+              f.write(f'run_on_every_sync={str(run_on_every_sync).lower()}\n')
+              f.write(f'require_findings_ingestion={str(require_findings_ingestion).lower()}\n')
               f.write(f'max_attempts={max_attempts}\n')
           PY
           cat /tmp/claude_cfg.out >> "$GITHUB_OUTPUT"
 
-      - name: Evaluate label gate
-        id: label_gate
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run_remediation=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          labels=",${{ needs.resolve-context.outputs.labels_csv }},"
-          trigger=",${{ steps.cfg.outputs.trigger_label }},"
-          if [[ "$labels" == *"$trigger"* ]]; then
-            echo "run_remediation=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run_remediation=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Check one-attempt-per-SHA guard
         id: attempt_guard
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' }}
         run: |
           marker="claude-remediation: ${{ needs.resolve-context.outputs.head_sha }}"
           if git log --oneline --grep "$marker" -n 1 | grep -q .; then
@@ -200,7 +183,7 @@ jobs:
           fi
 
       - name: Ingest Claude feedback
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' }}
         run: |
           mkdir -p artifacts
           python3 scripts/harness/claude_feedback_ingest.py \
@@ -213,7 +196,7 @@ jobs:
 
       - name: Parse Claude findings status
         id: findings
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' }}
         run: |
           status=$(jq -r '.status' artifacts/claude-findings.json)
           actionable=$(jq '[.findings[] | select(.actionable)] | length' artifacts/claude-findings.json)
@@ -223,10 +206,14 @@ jobs:
             echo "Claude feedback ingestion failed"
             exit 1
           fi
+          if [ "${{ steps.cfg.outputs.require_findings_ingestion }}" = "true" ] && [ "$status" != "success" ]; then
+            echo "Claude feedback ingestion is required on current head SHA"
+            exit 1
+          fi
 
       - name: Run constrained Claude remediation
         id: remediate
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' && steps.cfg.outputs.enabled == 'true' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' }}
         run: |
           if [ -z "${OPENFANG_CLAUDE_REMEDIATION_CMD}" ]; then
             echo "OPENFANG_CLAUDE_REMEDIATION_CMD is empty"
@@ -297,7 +284,7 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Write skipped remediation result
-        if: ${{ steps.label_gate.outputs.run_remediation != 'true' || steps.findings.outputs.actionable_count == '0' || steps.attempt_guard.outputs.already_attempted == 'true' || steps.cfg.outputs.enabled != 'true' }}
+        if: ${{ steps.cfg.outputs.enabled != 'true' || steps.findings.outputs.actionable_count == '0' || steps.attempt_guard.outputs.already_attempted == 'true' }}
         run: |
           python3 - <<'PY'
           import json
@@ -311,8 +298,6 @@ jobs:
               'validation_passed': True,
               'errors': [],
           }
-          if '${{ steps.label_gate.outputs.run_remediation }}' != 'true':
-              payload['errors'].append('label gate not satisfied for configured trigger label')
           if '${{ steps.cfg.outputs.enabled }}' != 'true':
               payload['errors'].append('claude remediation disabled in contract')
           if '${{ steps.attempt_guard.outputs.already_attempted }}' == 'true':
@@ -344,7 +329,7 @@ jobs:
           PY
 
       - name: Commit and push remediation fix
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' && steps.cfg.outputs.enabled == 'true' && steps.remediate.outputs.exit_code == '0' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' && steps.remediate.outputs.exit_code == '0' }}
         run: |
           if git diff --quiet && git diff --cached --quiet; then
             echo "No remediation changes to commit"
@@ -371,10 +356,14 @@ jobs:
           if [ "${{ steps.preflight.outputs.exit_code }}" != "0" ]; then
             status="failure"
           fi
-          if [ "${{ steps.label_gate.outputs.run_remediation }}" = "true" ] && \
+          if [ "${{ steps.cfg.outputs.enabled }}" = "true" ] && \
+             [ "${{ steps.cfg.outputs.require_findings_ingestion }}" = "true" ] && \
+             [ "${{ steps.findings.outputs.status }}" != "success" ]; then
+            status="failure"
+          fi
+          if [ "${{ steps.cfg.outputs.enabled }}" = "true" ] && \
              [ "${{ steps.findings.outputs.actionable_count }}" != "0" ] && \
              [ "${{ steps.attempt_guard.outputs.already_attempted }}" != "true" ] && \
-             [ "${{ steps.cfg.outputs.enabled }}" = "true" ] && \
              [ "${{ steps.remediate.outputs.exit_code }}" != "0" ]; then
             status="failure"
           fi
@@ -415,7 +404,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Fail workflow when remediation fails
-        if: ${{ steps.label_gate.outputs.run_remediation == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' && steps.cfg.outputs.enabled == 'true' && steps.remediate.outputs.exit_code != '0' }}
+        if: ${{ steps.cfg.outputs.enabled == 'true' && steps.findings.outputs.actionable_count != '0' && steps.attempt_guard.outputs.already_attempted != 'true' && steps.remediate.outputs.exit_code != '0' }}
         run: |
           echo "Claude remediation failed"
           exit 1

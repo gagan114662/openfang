@@ -8,7 +8,9 @@
       "phase-0": {
         "description": "Advisory baseline and metrics collection",
         "enforceMergeBlock": true,
-        "enableRemediation": false
+        "enableRemediation": false,
+        "enforceReviewState": true,
+        "requireEvidence": true
       },
       "phase-1": {
         "description": "Block stale review/docs drift, pilot remediation on labeled PRs",
@@ -50,7 +52,8 @@
         "code-review",
         "agent-evals-pr",
         "agent-evals-live-pr",
-        "infra-preflight"
+        "infra-preflight",
+        "sentry-live-validate"
       ],
       "reviewPolicy": {
         "minApprovals": 2,
@@ -72,7 +75,8 @@
         "integration-tests",
         "agent-evals-pr",
         "agent-evals-live-pr",
-        "infra-preflight"
+        "infra-preflight",
+        "sentry-live-validate"
       ],
       "reviewPolicy": {
         "minApprovals": 1
@@ -181,13 +185,15 @@
       },
       "claude": {
         "enabled": true,
-        "enforcement": "advisory",
+        "enforcement": "required",
         "source": "github_pr_comments",
+        "requireCurrentHeadIngestion": true,
         "github": {
           "trustedActorLogins": [
             "gagan114662"
           ],
           "trustedAppIds": [],
+          "trustedAppIdsEnv": "OPENFANG_CLAUDE_TRUSTED_APP_IDS",
           "commentMarker": "<!-- openfang-claude-feedback -->",
           "requireHeadShaMatch": true
         },
@@ -202,6 +208,8 @@
     "claudeRemediation": {
       "enabled": true,
       "triggerLabel": "claude-remediate",
+      "runOnEverySync": true,
+      "requireFindingsIngestion": true,
       "maxAttemptsPerSha": 1,
       "applyCommandVar": "OPENFANG_CLAUDE_REMEDIATION_CMD",
       "validationCommandVar": "OPENFANG_CLAUDE_VALIDATION_CMD"

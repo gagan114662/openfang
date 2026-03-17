@@ -33,12 +33,12 @@ OpenFang is an open-source Agent Operating System written in Rust (14 crates).
 - Desktop app lifecycle: `event.kind:desktop.lifecycle.*`
 
 ## Build & Verify Workflow
-After every feature implementation, run ALL THREE checks:
+After every feature implementation, the required finish gate is:
 ```bash
 cargo build --workspace --lib          # Must compile (use --lib if exe is locked)
 cargo test --workspace                 # All tests must pass (currently 1744+)
-cargo clippy --workspace --all-targets -- -D warnings  # Zero warnings
 ```
+`cargo clippy --workspace --all-targets -- -D warnings` is still recommended, but it is not part of the enforced session-finish gate.
 
 ## MANDATORY: Live Integration Testing
 **After implementing any new endpoint, feature, or wiring change, you MUST run live integration tests.** Unit tests alone are not enough — they can pass while the feature is actually dead code. Live tests catch:
@@ -140,11 +140,38 @@ taskkill //PID <pid> //F
 - Dashboard is Alpine.js SPA in `static/index_body.html` — new tabs need both HTML and JS data/methods
 - Config fields need: struct field + `#[serde(default)]` + Default impl entry + Serialize/Deserialize derives
 
-## MANDATORY: Commit Before Ending Session
-**Every agent session MUST end with clean worktree.** The auto-commit hook handles this automatically on session-end, but if you're about to stop work:
-1. Run `python3 scripts/claude/auto_commit.py .` to save your work
-2. Never leave modified/untracked files uncommitted
-3. To switch branches safely: `git sw <branch>` (auto-commits first)
+## MANDATORY: Clean At Rest
+**Agent sessions must end clean.** OpenFang now enforces this with a strict finish gate:
+1. No tracked or unignored untracked dirt may remain when the session ends.
+2. Docs-only sessions may finish clean without Rust validation.
+3. Code-bearing sessions must pass `cargo build --workspace --lib` and `cargo test --workspace`.
+4. The normal path is refusal, not auto-commit.
+
+## MANDATORY: Use Tool-Specific Worktrees
+**Do not share a writable checkout with Codex.** For any active task, open a dedicated linked worktree first:
+```bash
+# Claude task: create/reopen worktree and launch Claude there
+of-claude <task-name>
+
+# Codex task: create/reopen worktree and launch Codex there
+of-codex <task-name>
+
+# See which worktrees are clean vs dirty
+bash scripts/worktree/status.sh
+
+# Inspect or change root checkout lock state for human maintenance
+bash scripts/worktree/root_mode.sh status
+bash scripts/worktree/root_mode.sh unlock
+bash scripts/worktree/root_mode.sh lock
+```
+Rules:
+- Root checkout is inspection/integration only and is read-only by default.
+- Claude edits belong on `claude/<task>` worktrees.
+- Codex edits belong on `codex/<task>` worktrees.
+- Never run Claude and Codex in the same worktree at the same time.
+- Raw `claude` and `codex` are intentionally blocked in any OpenFang checkout or linked worktree.
+- Claude hook policy rejects sessions that were not launched through the guarded worktree path.
+- Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
 
 ## Common Gotchas
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first

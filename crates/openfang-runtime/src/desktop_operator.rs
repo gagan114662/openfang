@@ -462,6 +462,11 @@ impl DesktopOperatorManager {
             ),
             "focus_sentry_tab" => "Failed focusing the Sentry issues tab in Chrome.".to_string(),
             "attach_sidepanel" => {
+                if let Some(r) = reason {
+                    if r.to_lowercase().contains("authorization") || r.to_lowercase().contains("oauth") {
+                        return r.to_string();
+                    }
+                }
                 "Failed attaching Claude to the right side panel on the Sentry tab.".to_string()
             }
             "ready_panel" => {

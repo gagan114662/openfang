@@ -31,6 +31,31 @@
       "id": "no_harness_policy_violations",
       "title": "No harness policy violations",
       "description": "Risk/policy gate decision is in an allowed pass state."
+    },
+    {
+      "id": "review_providers_clean",
+      "title": "Review providers are clean on current head",
+      "description": "Greptile and Claude both report success with zero actionable findings for current head SHA."
+    },
+    {
+      "id": "sentry_live_validation_pass",
+      "title": "Sentry live validation passes",
+      "description": "Sentry validation report confirms required live events for this PR context."
+    },
+    {
+      "id": "infra_preflight_pass",
+      "title": "Infra preflight passes",
+      "description": "Infra preflight report status is pass."
+    },
+    {
+      "id": "live_provider_gate_pass",
+      "title": "Live provider gate passes",
+      "description": "Live provider probe report status is pass."
+    },
+    {
+      "id": "agent_blocking_evals_pass",
+      "title": "Blocking agent evals pass",
+      "description": "Blocking eval summary reports zero failed scenarios."
     }
   ],
   "path_rules": [
@@ -76,6 +101,11 @@
     "minimum_screenshots": "verify_minimum_screenshots",
     "minimum_videos": "verify_minimum_videos",
     "no_harness_policy_violations": "verify_policy_state",
+    "review_providers_clean": "verify_review_providers_clean",
+    "sentry_live_validation_pass": "verify_sentry_live_validation_pass",
+    "infra_preflight_pass": "verify_infra_preflight_pass",
+    "live_provider_gate_pass": "verify_live_provider_gate_pass",
+    "agent_blocking_evals_pass": "verify_agent_blocking_evals_pass",
     "ui_evidence_assertions_pass": "verify_ui_evidence_assertions",
     "api_runtime_validation_present": "verify_api_runtime_validation",
     "docs_consistency_reviewed": "verify_docs_consistency"

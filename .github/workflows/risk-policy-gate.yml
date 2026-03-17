@@ -108,7 +108,7 @@ jobs:
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
-      - name: Ingest Claude feedback (advisory)
+      - name: Ingest Claude feedback
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

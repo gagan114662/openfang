@@ -101,12 +101,47 @@ let panelSignals = rightPane.contains {
         || hay.contains("stop claude")
 }
 let panelVisible = panelSignals || closeSidePanel || !textAreas.isEmpty
+let toolbarButtons = candidates.filter {
+    $0.role == "AXButton"
+        && $0.width > 0
+        && $0.y <= (windowPos.y + max(140.0, windowSize.height * 0.20))
+        && $0.x >= (windowPos.x + windowSize.width * 0.45)
+}
+let openCandidates = toolbarButtons.filter {
+    let hay = "\($0.title) \($0.desc)".lowercased()
+    return hay.contains("claude")
+        || hay.contains("side panel")
+        || hay.contains("open panel")
+        || hay.contains("toggle panel")
+}
+let openButton = openCandidates.sorted(by: {
+    if abs($0.x - $1.x) > 2 { return $0.x > $1.x }
+    if abs($0.y - $1.y) > 2 { return $0.y < $1.y }
+    return $0.width > $1.width
+}).first
+let toolbarPointPayload = toolbarButtons.sorted(by: {
+    if abs($0.x - $1.x) > 2 { return $0.x > $1.x }
+    if abs($0.y - $1.y) > 2 { return $0.y < $1.y }
+    return $0.width > $1.width
+}).prefix(8).map { button in
+    [
+        "x": button.x + (button.width * 0.5),
+        "y": button.y + (button.height * 0.5),
+        "label": "\(button.title) \(button.desc)".trimmingCharacters(in: .whitespacesAndNewlines),
+    ] as [String: Any]
+}
+
 let payload: [String: Any] = [
     "success": true,
     "panel_visible": panelVisible,
     "composer_found": !textAreas.isEmpty,
     "send_button_found": sendButton,
     "close_side_panel_found": closeSidePanel,
+    "open_button_found": openButton != nil,
+    "open_button_x": openButton != nil ? (openButton!.x + (openButton!.width * 0.5)) : NSNull(),
+    "open_button_y": openButton != nil ? (openButton!.y + (openButton!.height * 0.5)) : NSNull(),
+    "open_button_label": openButton != nil ? "\(openButton!.title) \(openButton!.desc)" : "",
+    "toolbar_button_points": toolbarPointPayload,
     "window_width": windowSize.width,
     "window_height": windowSize.height,
     "candidate_count": candidates.count,

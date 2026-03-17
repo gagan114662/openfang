@@ -19,7 +19,7 @@ This contract controls:
 - browser evidence requirements
 - phased rollout policy
 - review provider orchestration (`reviewProviders`)
-- Claude label-gated remediation automation (`automation.claudeRemediation`)
+- Claude + Codex remediation automation (`automation.claudeRemediation`)
 
 ## Deterministic Order
 
@@ -35,7 +35,7 @@ PR sequence is strictly ordered:
 8. After clean rerun, `greptile-auto-resolve-threads` can resolve bot-only unresolved threads.
 9. `sentry-remediation-agent` (scheduled or manual) can ingest unresolved Sentry issues, normalize findings, and open constrained remediation PRs.
 10. `pr-review-harness` runs on every PR and publishes acceptance checklist + screenshot/video evidence to the PR body/comment.
-11. `claude-remediation-agent` can apply Codex fixes from trusted Claude advisory findings when label `claude-remediate` is present.
+11. `claude-remediation-agent` runs on every PR sync, ingests trusted Claude findings for the current head SHA, and applies constrained Codex remediation when actionable findings exist.
 
 ## Current-Head SHA Discipline
 
@@ -150,7 +150,7 @@ Example:
 
 If `requireHeadShaMatch=true`, stale `head_sha` comments are ignored.
 
-`claude-remediation-agent` remains label-gated (`claude-remediate`) and uses:
+`claude-remediation-agent` is always-on for PR syncs and uses:
 
 - `OPENFANG_CLAUDE_REMEDIATION_CMD`
 - `OPENFANG_CLAUDE_VALIDATION_CMD`
@@ -443,4 +443,4 @@ Only aggregate counts/tags are sent; no prompt or content payloads are forwarded
 - Gate and fanout are designed to avoid spending CI time on PR heads already blocked by policy.
 - Remediation is constrained to contract-allowed paths and forbids control-plane bypass changes.
 - Weekly metrics track stale-review rate, rerun pressure, remediation performance, and high-tier pass rate.
-- This PR validated Claude advisory ingestion with label-gated remediation.
+- This PR validated required Claude ingestion with always-on remediation.

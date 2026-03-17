@@ -9,6 +9,7 @@ const MAX_TRUNCATED_FIELDS_REPORTED: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct GuardedLogAttributes {
+    pub json_attributes: BTreeMap<String, JsonValue>,
     pub attributes: BTreeMap<String, SentryValue>,
     pub truncated_fields: Vec<String>,
     pub dropped_fields: usize,
@@ -49,6 +50,57 @@ pub fn flatten_with_prefix(prefix: &str, value: &JsonValue) -> BTreeMap<String, 
     let mut out = BTreeMap::new();
     flatten_json(prefix, value, &mut out);
     out
+}
+
+fn attr_string(attributes: &BTreeMap<String, JsonValue>, key: &str) -> Option<String> {
+    attributes
+        .get(key)
+        .and_then(JsonValue::as_str)
+        .map(ToString::to_string)
+}
+
+fn insert_tag_if_present(tags: &mut BTreeMap<String, String>, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            tags.insert(key.to_string(), trimmed.to_string());
+        }
+    }
+}
+
+fn indexed_tag_values(attributes: &BTreeMap<String, JsonValue>) -> BTreeMap<String, String> {
+    let mut tags = BTreeMap::new();
+    insert_tag_if_present(
+        &mut tags,
+        "event.kind",
+        attr_string(attributes, "event.kind"),
+    );
+    insert_tag_if_present(
+        &mut tags,
+        "event.category",
+        attr_string(attributes, "event.category"),
+    );
+    insert_tag_if_present(&mut tags, "run.id", attr_string(attributes, "run.id"));
+    insert_tag_if_present(
+        &mut tags,
+        "request.id",
+        attr_string(attributes, "request.id"),
+    );
+    insert_tag_if_present(&mut tags, "trace.id", attr_string(attributes, "trace.id"));
+    insert_tag_if_present(
+        &mut tags,
+        "folder.path_hash",
+        attr_string(attributes, "folder.path_hash"),
+    );
+    insert_tag_if_present(&mut tags, "scan.mode", attr_string(attributes, "scan.mode"));
+    insert_tag_if_present(&mut tags, "graph_id", attr_string(attributes, "graph_id"));
+    insert_tag_if_present(
+        &mut tags,
+        "simulation_id",
+        attr_string(attributes, "simulation_id"),
+    );
+    insert_tag_if_present(&mut tags, "outcome", attr_string(attributes, "outcome"));
+    tags
 }
 
 fn truncate_to_bytes(input: &str, max_bytes: usize) -> String {
@@ -149,12 +201,14 @@ pub fn build_guarded_log_attributes(
         .map(|(k, v)| approximate_attr_size(k, v))
         .sum::<usize>();
 
+    let json_attrs = kept.clone();
     let sentry_attrs = kept
         .into_iter()
         .map(|(k, v)| (k, sentry_value_from_json(v)))
         .collect::<BTreeMap<_, _>>();
 
     GuardedLogAttributes {
+        json_attributes: json_attrs,
         attributes: sentry_attrs,
         truncated_fields: truncated.into_iter().collect(),
         dropped_fields,
@@ -176,6 +230,9 @@ pub fn capture_structured_log(
     let message = body.into();
     sentry::with_scope(
         |scope| {
+            for (key, value) in indexed_tag_values(&guarded.json_attributes) {
+                scope.set_tag(&key, value);
+            }
             for (key, value) in guarded.attributes.clone() {
                 scope.set_extra(&key, value);
             }
@@ -230,5 +287,41 @@ mod tests {
         let guarded = build_guarded_log_attributes(attrs, 1024, 8 * 1024);
         assert!(guarded.dropped_fields > 0);
         assert!(guarded.serialized_bytes <= 8 * 1024 + 2048);
+    }
+
+    #[test]
+    fn test_indexed_tag_values_extracts_mirofish_fields() {
+        let mut attrs = BTreeMap::new();
+        attrs.insert(
+            "event.kind".to_string(),
+            json!("mirofish.autotrigger.decision"),
+        );
+        attrs.insert("event.category".to_string(), json!("mirofish"));
+        attrs.insert("run.id".to_string(), json!("run-123"));
+        attrs.insert("request.id".to_string(), json!("req-123"));
+        attrs.insert("trace.id".to_string(), json!("trace-123"));
+        attrs.insert("folder.path_hash".to_string(), json!("abc123"));
+        attrs.insert("scan.mode".to_string(), json!("fast"));
+
+        let tags = indexed_tag_values(&attrs);
+        assert_eq!(
+            tags.get("event.kind"),
+            Some(&"mirofish.autotrigger.decision".to_string())
+        );
+        assert_eq!(tags.get("run.id"), Some(&"run-123".to_string()));
+        assert_eq!(tags.get("request.id"), Some(&"req-123".to_string()));
+        assert_eq!(tags.get("trace.id"), Some(&"trace-123".to_string()));
+        assert_eq!(tags.get("scan.mode"), Some(&"fast".to_string()));
+        assert_eq!(tags.get("folder.path_hash"), Some(&"abc123".to_string()));
+    }
+
+    #[test]
+    fn test_indexed_tag_values_ignores_empty_values() {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("event.kind".to_string(), json!(" "));
+        attrs.insert("run.id".to_string(), json!(""));
+
+        let tags = indexed_tag_values(&attrs);
+        assert!(tags.is_empty());
     }
 }

@@ -105,6 +105,23 @@ def git_context(cwd: str) -> dict:
     return ctx
 
 
+def policy_repo_root(cwd: str) -> str:
+    explicit = os.environ.get("OPENFANG_POLICY_REPO_ROOT")
+    if explicit:
+        return explicit
+
+    try:
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=2, cwd=cwd,
+        ).stdout.strip()
+        if common_dir:
+            return str(pathlib.Path(common_dir).resolve().parent)
+    except Exception:
+        pass
+    return str(REPO_ROOT)
+
+
 def write_artifact(record: dict) -> None:
     ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with ARTIFACT_PATH.open("a", encoding="utf-8") as fh:
@@ -147,6 +164,28 @@ def post_structured_event(record: dict) -> None:
         return
 
 
+def enforce_claude_worktree(hook_name: str, cwd: str, ctx: dict) -> int:
+    if hook_name not in {"session-start", "user-prompt-submit", "pre-task"}:
+        return 0
+
+    env = os.environ.copy()
+    env["OPENFANG_POLICY_REPO_ROOT"] = policy_repo_root(cwd)
+    result = subprocess.run(
+        [
+            "bash",
+            str(pathlib.Path(env["OPENFANG_POLICY_REPO_ROOT"]) / "scripts" / "worktree" / "guard.sh"),
+            "session",
+            "--tool",
+            "claude",
+            "--cwd",
+            cwd,
+        ],
+        cwd=cwd,
+        env=env,
+    )
+    return result.returncode
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: claude_hook.py <hook-name>", file=sys.stderr)
@@ -155,6 +194,11 @@ def main() -> int:
     hook_name = sys.argv[1]
     raw = sys.stdin.buffer.read()
     payload = load_payload(raw)
+    cwd = payload.get("cwd") or os.getcwd()
+    ctx = git_context(cwd)
+    policy_rc = enforce_claude_worktree(hook_name, cwd, ctx)
+    if policy_rc != 0:
+        return policy_rc
 
     result = subprocess.run(
         ["entire", "hooks", "claude-code", hook_name],
@@ -171,7 +215,6 @@ def main() -> int:
         or os.environ.get("SESSION_ID")
         or ""
     )
-    cwd = payload.get("cwd") or os.getcwd()
     record = {
         "event_kind": event_kind,
         "outcome": outcome,
@@ -180,21 +223,11 @@ def main() -> int:
         "cwd": cwd,
         "tool_use_id": payload.get("toolUseID") or payload.get("tool_use_id"),
         "failure_reason": None if result.returncode == 0 else f"entire_exit_{result.returncode}",
-        "git_context": git_context(cwd),
+        "git_context": ctx,
         "payload": payload,
     }
     write_artifact(record)
     post_structured_event(record)
-
-    # Auto-commit on session end/stop to prevent dirty worktrees
-    if hook_name in ("session-end", "stop"):
-        try:
-            subprocess.run(
-                [sys.executable, str(REPO_ROOT / "scripts" / "claude" / "auto_commit.py"), cwd],
-                timeout=10,
-            )
-        except Exception:
-            pass
 
     return result.returncode
 

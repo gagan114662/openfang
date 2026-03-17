@@ -126,6 +126,96 @@ class PolicyPacketGateTests(unittest.TestCase):
             self.assertEqual(payload["infra_preflight_state"]["status"], "fail")
             self.assertEqual(payload["live_provider_state"]["status"], "fail")
 
+    def test_risk_policy_gate_fails_when_claude_required_and_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            contract = tmp / "contract.json"
+            changed = tmp / "changed.txt"
+            report = tmp / "report.json"
+            review = tmp / "review.json"
+            claude = tmp / "claude.json"
+
+            contract.write_text(
+                json.dumps(
+                    {
+                        "rolloutPolicy": {
+                            "currentPhase": "phase-0",
+                            "phases": {
+                                "phase-0": {
+                                    "enforceMergeBlock": True,
+                                    "enableRemediation": False,
+                                    "enforceReviewState": False,
+                                }
+                            },
+                        },
+                        "riskTiers": {
+                            "low": {
+                                "paths": ["**"],
+                                "requiredChecks": ["risk-policy-gate"],
+                            }
+                        },
+                        "reviewProviders": {
+                            "mode": "alongside",
+                            "primary": "greptile",
+                            "providers": {
+                                "greptile": {"enabled": False, "enforcement": "advisory"},
+                                "claude": {"enabled": True, "enforcement": "required"},
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            changed.write_text("README.md\n", encoding="utf-8")
+            claude.write_text(
+                json.dumps(
+                    {
+                        "provider": "claude",
+                        "head_sha": "deadbeefcafebabe",
+                        "status": "missing",
+                        "findings": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env["GITHUB_TOKEN"] = ""
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(RISK_GATE),
+                    "--pr",
+                    "1",
+                    "--head-sha",
+                    "deadbeefcafebabe",
+                    "--changed-files",
+                    str(changed),
+                    "--contract",
+                    str(contract),
+                    "--repo",
+                    "owner/repo",
+                    "--review-findings",
+                    str(review),
+                    "--claude-findings",
+                    str(claude),
+                    "--report-out",
+                    str(report),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(payload["decision"], "fail")
+            self.assertEqual(payload["review_states"]["claude"]["status"], "missing")
+            self.assertTrue(
+                any("claude review state is 'missing'" in reason for reason in payload.get("reasons", []))
+            )
+
     def test_pr_packet_includes_infra_and_live_criteria(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)

@@ -6,8 +6,9 @@ LABEL="com.getfoolish.openfang.vacation-guard"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/.openfang"
-OUT_PATH="$ROOT/artifacts/vacation-guard/latest.json"
-HISTORY_DIR="$ROOT/artifacts/vacation-guard/history"
+GUARD_DIR="$HOME/.openfang/artifacts/vacation-guard"
+OUT_PATH="$GUARD_DIR/latest.json"
+HISTORY_DIR="$GUARD_DIR/history"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || true)}"
 REMOTE_HOST="${REMOTE_HOST:-gagan-arora@192.168.40.234}"
 INTERVAL="${INTERVAL:-300}"
@@ -17,7 +18,7 @@ if [[ -z "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-mkdir -p "$PLIST_DIR" "$LOG_DIR" "$ROOT/artifacts/vacation-guard/history"
+mkdir -p "$PLIST_DIR" "$LOG_DIR" "$HISTORY_DIR"
 
 cat >"$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
