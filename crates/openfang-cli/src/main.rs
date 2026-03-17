@@ -770,6 +770,10 @@ fn main() {
         init_tracing_stderr();
     }
 
+    // Keep bundled agent templates in sync for existing installs so upgrades
+    // pick up new defaults without requiring `openfang init` again.
+    sync_bundled_agents_if_initialized();
+
     match cli.command {
         None => {
             if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
@@ -928,6 +932,23 @@ fn main() {
 // ---------------------------------------------------------------------------
 // Daemon detection helpers
 // ---------------------------------------------------------------------------
+
+fn sync_bundled_agents_if_initialized() {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+
+    let openfang_dir = home.join(".openfang");
+    if !openfang_dir.exists() {
+        return;
+    }
+
+    let agents_dir = openfang_dir.join("agents");
+    if std::fs::create_dir_all(&agents_dir).is_ok() {
+        restrict_dir_permissions(&agents_dir);
+        bundled_agents::install_bundled_agents(&agents_dir);
+    }
+}
 
 /// Try to find a running daemon. Returns its base URL if found.
 /// SECURITY: Restrict file permissions to owner-only (0600) on Unix.

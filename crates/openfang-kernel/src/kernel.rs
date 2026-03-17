@@ -274,6 +274,10 @@ fn ensure_workspace(workspace: &Path) -> KernelResult<()> {
     Ok(())
 }
 
+fn current_prompt_channel_type() -> Option<String> {
+    openfang_runtime::sentry_logs::current_event_context().and_then(|ctx| ctx.channel_kind)
+}
+
 /// Generate workspace identity files for an agent (SOUL.md, USER.md, TOOLS.md, MEMORY.md).
 /// Uses `create_new` to never overwrite existing files (preserves user edits).
 fn generate_identity_files(workspace: &Path, manifest: &AgentManifest) {
@@ -1592,7 +1596,7 @@ impl OpenFangKernel {
                     .ok()
                     .and_then(|(s, _)| s),
                 user_name,
-                channel_type: None,
+                channel_type: current_prompt_channel_type(),
                 is_subagent: manifest
                     .metadata
                     .get("is_subagent")
@@ -2064,7 +2068,7 @@ impl OpenFangKernel {
                     .ok()
                     .and_then(|(s, _)| s),
                 user_name,
-                channel_type: None,
+                channel_type: current_prompt_channel_type(),
                 is_subagent: manifest
                     .metadata
                     .get("is_subagent")
@@ -5365,6 +5369,21 @@ fn truncate_str(input: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_current_prompt_channel_type_uses_live_event_context() {
+        let channel = openfang_runtime::sentry_logs::scope_event_context(
+            openfang_runtime::sentry_logs::EventContext {
+                channel_kind: Some("telegram".to_string()),
+                channel_user_id: Some("8444910202".to_string()),
+                ..Default::default()
+            },
+            async { current_prompt_channel_type() },
+        )
+        .await;
+
+        assert_eq!(channel.as_deref(), Some("telegram"));
+    }
 
     #[test]
     fn test_manifest_to_capabilities() {

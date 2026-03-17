@@ -114,7 +114,7 @@ impl McpBackend {
 
 /// Run the MCP server over stdio.
 pub fn run_mcp_server(config: Option<std::path::PathBuf>) {
-    let backend = create_backend(config);
+    let (backend, _sentry_guard) = create_backend(config);
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -135,8 +135,40 @@ pub fn run_mcp_server(config: Option<std::path::PathBuf>) {
     }
 }
 
-fn create_backend(config: Option<std::path::PathBuf>) -> McpBackend {
+fn initialize_sentry_for_mcp(
+    sentry_config: &openfang_types::config::SentryConfig,
+) -> Option<sentry::ClientInitGuard> {
+    let dsn = sentry_config.dsn.as_ref()?;
+    if !sentry_config.error_tracking && !sentry_config.performance_monitoring {
+        return None;
+    }
+
+    let guard = sentry::init((
+        dsn.clone(),
+        sentry::ClientOptions {
+            environment: Some(sentry_config.environment.clone().into()),
+            traces_sample_rate: sentry_config.traces_sample_rate,
+            send_default_pii: sentry_config.include_prompts,
+            attach_stacktrace: sentry_config.attach_stacktrace,
+            ..Default::default()
+        },
+    ));
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("component", "openfang-cli.mcp");
+        for (key, value) in &sentry_config.tags {
+            scope.set_tag(key, value);
+        }
+    });
+
+    Some(guard)
+}
+
+fn create_backend(
+    config: Option<std::path::PathBuf>,
+) -> (McpBackend, Option<sentry::ClientInitGuard>) {
     let kernel_config = openfang_kernel::config::load_config(config.as_deref());
+    let sentry_guard = initialize_sentry_for_mcp(&kernel_config.sentry);
     configure_sentry_logs(&kernel_config.sentry);
 
     // Try daemon first
@@ -145,7 +177,7 @@ fn create_backend(config: Option<std::path::PathBuf>) -> McpBackend {
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .expect("Failed to build HTTP client");
-        return McpBackend::Daemon { base_url, client };
+        return (McpBackend::Daemon { base_url, client }, sentry_guard);
     }
 
     // Fall back to in-process kernel
@@ -157,10 +189,13 @@ fn create_backend(config: Option<std::path::PathBuf>) -> McpBackend {
         }
     };
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-    McpBackend::InProcess {
-        kernel: Box::new(kernel),
-        rt,
-    }
+    (
+        McpBackend::InProcess {
+            kernel: Box::new(kernel),
+            rt,
+        },
+        sentry_guard,
+    )
 }
 
 /// Read a Content-Length framed JSON-RPC message from the reader.

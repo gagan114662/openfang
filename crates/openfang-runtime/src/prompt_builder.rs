@@ -354,7 +354,11 @@ fn build_channel_section(channel: &str) -> String {
     let (limit, hints) = match channel {
         "telegram" => (
             "4096",
-            "Use Telegram-compatible formatting (bold with *, code with `backticks`).",
+            "Use Telegram-compatible formatting (bold with *, code with `backticks`).\n\
+             Receiving the current user message is direct proof that Telegram inbound delivery is working for this conversation.\n\
+             If the user asks whether Telegram is working, say that this message confirms inbound Telegram delivery right now.\n\
+             Only claim a full end-to-end check or a 'PASS' if you are basing it on this live message and/or a tool/API result you just obtained in this turn.\n\
+             Do not present old logs, artifacts, or guard reports as proof of a live Telegram pass unless you clearly label them as historical evidence.",
         ),
         "discord" => (
             "2000",
@@ -761,6 +765,8 @@ mod tests {
         let section = build_channel_section("telegram");
         assert!(section.contains("4096"));
         assert!(section.contains("Telegram"));
+        assert!(section.contains("direct proof"));
+        assert!(section.contains("Do not present old logs"));
     }
 
     #[test]
