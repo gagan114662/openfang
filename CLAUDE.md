@@ -169,7 +169,7 @@ Rules:
 - Claude edits belong on `claude/<task>` worktrees.
 - Codex edits belong on `codex/<task>` worktrees.
 - Never run Claude and Codex in the same worktree at the same time.
-- Raw `claude` and `codex` are intentionally blocked in any OpenFang checkout or linked worktree.
+- Raw `claude` and `codex` inside any OpenFang checkout or linked worktree prompt for a task name, then auto-route into the matching managed worktree.
 - Claude hook policy rejects sessions that were not launched through the guarded worktree path.
 - Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
 

@@ -145,7 +145,7 @@ Rules:
 - Active Claude work belongs on `claude/<task>` branches.
 - Active Codex work belongs on `codex/<task>` branches.
 - Never run Claude and Codex against the same worktree at the same time.
-- Raw `claude` and `codex` are intentionally blocked in any OpenFang checkout or linked worktree.
+- Raw `claude` and `codex` inside any OpenFang checkout or linked worktree prompt for a task name, then auto-route into the matching managed worktree.
 - The repo's Claude hook rejects sessions that were not launched through the guarded worktree path.
 - Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
 
