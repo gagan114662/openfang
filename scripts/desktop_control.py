@@ -2233,6 +2233,19 @@ def main() -> int:
         return 0 if ok else 1
 
     if cmd == "chrome-open-sentry":
+        preflight = desktop_preflight()
+        if not preflight.get("ok"):
+            payload = claude_failure_payload(
+                text="",
+                phase="preflight",
+                reason=str(preflight.get("failure_reason") or "Desktop preflight failed."),
+                active=preflight.get("active_window") or {},
+                attempt_count=0,
+                extra_data={"preflight": preflight},
+            )
+            print(json.dumps(payload))
+            print(payload.get("error", "preflight failed"), file=sys.stderr)
+            return 1
         ok, active = chrome_open_url_live(SENTRY_URL)
         payload = browser_state_payload(include_probe=True, probe_url=SENTRY_URL)
         payload["success"] = (
@@ -2242,9 +2255,24 @@ def main() -> int:
         )
         payload["data"]["active_window"] = active
         print(json.dumps(payload))
+        if not payload["success"]:
+            print(payload.get("error", "Failed opening Sentry."), file=sys.stderr)
         return 0 if payload["success"] else 1
 
     if cmd == "chrome-open-claude-extension":
+        preflight = desktop_preflight()
+        if not preflight.get("ok"):
+            payload = claude_failure_payload(
+                text="",
+                phase="preflight",
+                reason=str(preflight.get("failure_reason") or "Desktop preflight failed."),
+                active=preflight.get("active_window") or {},
+                attempt_count=0,
+                extra_data={"preflight": preflight},
+            )
+            print(json.dumps(payload))
+            print(payload.get("error", "preflight failed"), file=sys.stderr)
+            return 1
         ok, active = chrome_open_claude_extension_panel()
         payload = claude_state_payload(
             active,
@@ -2262,6 +2290,8 @@ def main() -> int:
         payload["data"]["extension_id"] = CLAUDE_EXTENSION_ID
         payload["data"]["target_url"] = None
         print(json.dumps(payload))
+        if not payload["success"]:
+            print(payload.get("error", "Failed opening Claude extension."), file=sys.stderr)
         return 0 if payload["success"] else 1
 
     if cmd == "claude-prompt":
@@ -2270,6 +2300,8 @@ def main() -> int:
             return 2
         payload = claude_prompt_live(" ".join(sys.argv[2:]))
         print(json.dumps(payload))
+        if not payload.get("success"):
+            print(payload.get("error", "Failed sending Claude prompt."), file=sys.stderr)
         return 0 if payload.get("success") else 1
 
     if cmd == "browser-state":

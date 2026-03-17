@@ -1,3 +1,4 @@
+use crate::sentry_logs::capture_structured_log;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use sentry::protocol::Value as SentryValue;
@@ -11,6 +12,7 @@ use std::process::Command;
 
 const FILE_REPLY_PREFIX: &str = "__OPENFANG_FILE__:";
 const INVARIANT_OPERATOR_VALID_TRANSITION: &str = "operator_valid_transition";
+const CLAUDE_EXTENSION_RESET_CHAT_ID: &str = "8444910202";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -390,7 +392,109 @@ impl DesktopOperatorManager {
         &self.config
     }
 
+    fn one_time_reset_marker_path(&self, chat_id: &str) -> PathBuf {
+        self.store_dir()
+            .join(format!(".session-reset-{chat_id}.done"))
+    }
+
+    fn maybe_reset_one_time_chat_session(&self, chat_id: &str) {
+        if chat_id != CLAUDE_EXTENSION_RESET_CHAT_ID {
+            return;
+        }
+        let marker = self.one_time_reset_marker_path(chat_id);
+        if marker.exists() {
+            return;
+        }
+        self.sessions.remove(chat_id);
+        let _ = fs::remove_file(self.session_path(chat_id));
+        let _ = fs::write(&marker, Utc::now().to_rfc3339());
+    }
+
+    fn is_claude_extension_action(action_type: &str) -> bool {
+        matches!(
+            action_type,
+            "claude_analyze_sentry" | "claude_prompt" | "open_claude_extension"
+        )
+    }
+
+    fn parse_failure_detail(details: &str) -> (Option<String>, Option<String>) {
+        let mut phase = None;
+        let mut reason = None;
+        for part in details.split(';').map(str::trim) {
+            if let Some(rest) = part.strip_prefix("failure_phase=") {
+                phase = Some(rest.trim().to_string());
+            } else if let Some(rest) = part.strip_prefix("failure_reason=") {
+                reason = Some(rest.trim().to_string());
+            }
+        }
+        (phase, reason)
+    }
+
+    fn emit_claude_extension_lifecycle(
+        &self,
+        kind: &str,
+        level: Level,
+        chat_id: &str,
+        plan: &DesktopOperatorPlan,
+        observation: Option<&DesktopOperatorObservation>,
+        details: Option<&str>,
+    ) {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("event.kind".to_string(), json!(kind));
+        attrs.insert("operator.chat_id".to_string(), json!(chat_id));
+        attrs.insert("operator.goal".to_string(), json!(self.get_or_create(chat_id).current_goal));
+        attrs.insert(
+            "operator.action".to_string(),
+            json!(plan.action.action_type.clone()),
+        );
+        attrs.insert(
+            "sentry.url".to_string(),
+            json!(
+                plan.action
+                    .args
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("https://foolish.sentry.io/issues/?project=-1&statsPeriod=24h")
+            ),
+        );
+        if let Some(obs) = observation {
+            attrs.insert(
+                "artifact.screenshot_path".to_string(),
+                json!(obs.screenshot_path.clone()),
+            );
+            attrs.insert("claude.attached".to_string(), json!(obs.success));
+            if let Some(error) = obs.error.as_deref() {
+                let (phase, reason) = Self::parse_failure_detail(error);
+                attrs.insert(
+                    "failure_phase".to_string(),
+                    json!(phase.unwrap_or_else(|| "unknown".to_string())),
+                );
+                attrs.insert(
+                    "failure_reason".to_string(),
+                    json!(reason.unwrap_or_else(|| error.to_string())),
+                );
+            }
+        }
+        if let Some(raw) = details {
+            let (phase, reason) = Self::parse_failure_detail(raw);
+            if !attrs.contains_key("failure_phase") {
+                attrs.insert(
+                    "failure_phase".to_string(),
+                    json!(phase.unwrap_or_else(|| "unknown".to_string())),
+                );
+            }
+            if !attrs.contains_key("failure_reason") {
+                attrs.insert(
+                    "failure_reason".to_string(),
+                    json!(reason.unwrap_or_else(|| raw.to_string())),
+                );
+            }
+        }
+        capture_structured_log(level, kind, attrs);
+    }
+
     pub fn get_or_create(&self, chat_id: &str) -> DesktopOperatorSession {
+        self.maybe_reset_one_time_chat_session(chat_id);
         if let Some(entry) = self.sessions.get(chat_id) {
             return entry.clone();
         }
@@ -1420,8 +1524,34 @@ impl DesktopOperatorManager {
         let plan = self.generate_next_step(chat_id, user_message)?;
         self.record_milestone(chat_id, &plan.milestone);
         self.set_state(chat_id, DesktopOperatorState::Acting);
+        let is_claude_flow = Self::is_claude_extension_action(&plan.action.action_type);
+        if is_claude_flow {
+            self.emit_claude_extension_lifecycle(
+                "operator.claude_extension.started",
+                Level::Info,
+                chat_id,
+                &plan,
+                None,
+                None,
+            );
+        }
 
-        let observation = self.execute_action(chat_id, &plan)?;
+        let observation = match self.execute_action(chat_id, &plan) {
+            Ok(observation) => observation,
+            Err(err) => {
+                if is_claude_flow {
+                    self.emit_claude_extension_lifecycle(
+                        "operator.claude_extension.failed",
+                        Level::Warning,
+                        chat_id,
+                        &plan,
+                        None,
+                        Some(&err.details),
+                    );
+                }
+                return Err(err);
+            }
+        };
         self.set_state(chat_id, DesktopOperatorState::Verifying);
         let verified = self.verify_action(&plan, &observation)?;
 
@@ -1439,7 +1569,33 @@ impl DesktopOperatorManager {
                 "open_sentry" => "Sentry opened but browser verification failed.".to_string(),
                 "open_claude_extension" => "Failed opening the Claude extension.".to_string(),
                 "claude_analyze_sentry" => {
-                    "Failed using the Claude extension to analyze Sentry.".to_string()
+                    let detail = observation.error.clone().unwrap_or_default();
+                    let (phase, parsed_reason) = Self::parse_failure_detail(&detail);
+                    match phase.as_deref() {
+                        Some("preflight") => format!(
+                            "Blocked before starting desktop control: {}",
+                            parsed_reason.unwrap_or_else(|| "Desktop preflight failed.".to_string())
+                        ),
+                        Some("focus_sentry_tab") => "Failed focusing the Sentry issues tab."
+                            .to_string(),
+                        Some("attach_sidepanel") => {
+                            "Failed attaching Claude to the right side panel on the Sentry tab."
+                                .to_string()
+                        }
+                        Some("ready_panel") => {
+                            "Claude side panel is busy and did not return to an idle composer."
+                                .to_string()
+                        }
+                        Some("submit") => {
+                            "Failed sending the Claude prompt from the attached side panel."
+                                .to_string()
+                        }
+                        Some("response_wait") => {
+                            "Claude did not start responding after the prompt was submitted."
+                                .to_string()
+                        }
+                        _ => "Failed using the Claude extension to analyze Sentry.".to_string(),
+                    }
                 }
                 "open_codex" => "Failed opening Codex.".to_string(),
                 "screen_record" => "Failed recording the screen.".to_string(),
@@ -1454,8 +1610,18 @@ impl DesktopOperatorManager {
                 Some(&plan.milestone),
                 false,
                 Some(reason.clone()),
-                Some(observation),
+                Some(observation.clone()),
             );
+            if is_claude_flow {
+                self.emit_claude_extension_lifecycle(
+                    "operator.claude_extension.failed",
+                    Level::Warning,
+                    chat_id,
+                    &plan,
+                    Some(&observation),
+                    Some(&reason),
+                );
+            }
             return Err(OperatorError::failed(reason.clone(), reason));
         }
 
@@ -1466,9 +1632,21 @@ impl DesktopOperatorManager {
             Some(&plan.milestone),
             true,
             Some(reply.clone()),
-            Some(observation),
+            Some(observation.clone()),
         );
         self.set_state(chat_id, DesktopOperatorState::Completed);
+        if is_claude_flow {
+            let latest = self.get_or_create(chat_id);
+            let latest_obs = latest.recent_steps.last().and_then(|s| s.observation.as_ref());
+            self.emit_claude_extension_lifecycle(
+                "operator.claude_extension.completed",
+                Level::Info,
+                chat_id,
+                &plan,
+                latest_obs,
+                None,
+            );
+        }
         Ok(OperatorReply {
             user_message: reply,
         })
