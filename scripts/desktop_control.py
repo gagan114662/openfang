@@ -2272,12 +2272,14 @@ def main() -> int:
             print(payload.get("error", "preflight failed"), file=sys.stderr)
             return 1
         ok, active = chrome_open_url_live(SENTRY_URL)
-        payload = browser_state_payload(include_probe=True, probe_url=SENTRY_URL)
-        payload["success"] = (
-            payload.get("success")
-            and ok
-            and active.get("app_name") == "Google Chrome"
-        )
+        ensure_frontmost_app("Google Chrome", attempts=6, delay=0.3)
+        payload = browser_state_payload(include_probe=False)
+        current_url = chrome_tab_value(
+            'tell application "Google Chrome" to get URL of active tab of front window'
+        ) or ""
+        payload["data"]["url"] = current_url
+        payload["data"]["app_name"] = active.get("app_name") or payload["data"].get("app_name")
+        payload["success"] = bool(ok and url_matches_target(current_url, SENTRY_URL))
         payload["data"]["active_window"] = active
         print(json.dumps(payload))
         if not payload["success"]:
