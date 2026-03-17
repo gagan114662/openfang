@@ -176,11 +176,27 @@ def run_browser_probe(url: str) -> dict:
         return {"success": False, "error": str(exc)}
     finally:
         try:
-            proc.stdin.write(json.dumps({"action": "Close"}) + "\n")
-            proc.stdin.flush()
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.write(json.dumps({"action": "Close"}) + "\n")
+                proc.stdin.flush()
+                proc.stdin.close()
         except Exception:
             pass
-        proc.kill()
+        try:
+            if proc.stdout and not proc.stdout.closed:
+                proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            if proc.stderr and not proc.stderr.closed:
+                proc.stderr.close()
+        except Exception:
+            pass
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:
+            pass
 
 
 def chrome_tab_value(expression: str) -> str | None:
