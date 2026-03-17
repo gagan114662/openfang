@@ -1,36 +1,12 @@
-# OpenFang — Agent Instructions
+# OpenFang — Agent Instructions (Codex / AGENTS.md)
+> This file is identical to CLAUDE.md and serves as the instruction set for Codex CLI.
+> Both Claude and Codex follow the same rules.
 
 ## Project Overview
 OpenFang is an open-source Agent Operating System written in Rust (14 crates).
 - Config: `~/.openfang/config.toml`
 - Default API: `http://127.0.0.1:4200`
 - CLI binary: `target/release/openfang.exe` (or `target/debug/openfang.exe`)
-
-## Claude Desktop Workflow
-- Repo-local MCP config lives in `.mcp.json` and exposes:
-  - `openfang` via `cargo run --quiet -p openfang-cli -- mcp`
-  - `contextplus` for local semantic context
-- Repo-local Claude hooks live in `.claude/settings.json` and wrap `entire` through `scripts/claude/claude_hook.py`.
-- Canonical Claude lifecycle events are emitted as:
-  - `claude.session.started`
-  - `claude.session.ended`
-  - `claude.session.stopped`
-  - `claude.task.started`
-  - `claude.task.completed`
-  - `claude.task.failed`
-  - `claude.prompt.submitted`
-- MCP tool calls from Claude Desktop are observable as:
-  - `mcp.tool_call.started`
-  - `mcp.tool_call.completed`
-  - `mcp.tool_call.failed`
-
-## Sentry Queries
-- API heartbeat: `event.kind:api.request`
-- Agent loops: `event.kind:runtime.agent_loop.completed OR event.kind:runtime.agent_loop.failed`
-- LLM calls: `event.kind:runtime.llm_call.completed OR event.kind:runtime.llm_call.failed`
-- Claude hooks: `event.kind:claude.*`
-- Claude Desktop MCP: `event.kind:mcp.tool_call.*`
-- Desktop app lifecycle: `event.kind:desktop.lifecycle.*`
 
 ## Build & Verify Workflow
 After every feature implementation, the required finish gate is:
@@ -142,13 +118,13 @@ taskkill //PID <pid> //F
 
 ## MANDATORY: Clean At Rest
 **Agent sessions must end clean.** OpenFang now enforces this with a strict finish gate:
-1. No tracked or unignored untracked dirt may remain when the session ends.
-2. Docs-only sessions may finish clean without Rust validation.
-3. Code-bearing sessions must pass `cargo build --workspace --lib` and `cargo test --workspace`.
-4. The normal path is refusal, not auto-commit.
+- No tracked or unignored untracked dirt may remain when the session ends.
+- Docs-only sessions may finish clean without Rust validation.
+- Code-bearing sessions must pass `cargo build --workspace --lib` and `cargo test --workspace`.
+- The normal path is refusal, not auto-commit.
 
 ## MANDATORY: Use Tool-Specific Worktrees
-**Do not share a writable checkout with Codex.** For any active task, open a dedicated linked worktree first:
+**Claude and Codex must not share a writable checkout.** Use dedicated linked worktrees:
 ```bash
 # Claude task: create/reopen worktree and launch Claude there
 of-claude <task-name>
@@ -156,7 +132,7 @@ of-claude <task-name>
 # Codex task: create/reopen worktree and launch Codex there
 of-codex <task-name>
 
-# See which worktrees are clean vs dirty
+# Inspect all worktrees and see which ones are dirty
 bash scripts/worktree/status.sh
 
 # Inspect or change root checkout lock state for human maintenance
@@ -166,11 +142,11 @@ bash scripts/worktree/root_mode.sh lock
 ```
 Rules:
 - Root checkout is inspection/integration only and is read-only by default.
-- Claude edits belong on `claude/<task>` worktrees.
-- Codex edits belong on `codex/<task>` worktrees.
-- Never run Claude and Codex in the same worktree at the same time.
+- Active Claude work belongs on `claude/<task>` branches.
+- Active Codex work belongs on `codex/<task>` branches.
+- Never run Claude and Codex against the same worktree at the same time.
 - Raw `claude` and `codex` are intentionally blocked in any OpenFang checkout or linked worktree.
-- Claude hook policy rejects sessions that were not launched through the guarded worktree path.
+- The repo's Claude hook rejects sessions that were not launched through the guarded worktree path.
 - Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
 
 ## Common Gotchas
