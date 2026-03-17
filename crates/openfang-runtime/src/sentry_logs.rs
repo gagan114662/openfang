@@ -506,6 +506,33 @@ fn indexed_tag_values(attributes: &BTreeMap<String, JsonValue>) -> BTreeMap<Stri
         provider.map(|provider| provider_family(&provider)),
     );
 
+    // Git / worktree / contract context — searchable in Sentry Issues view
+    insert_tag_if_present(
+        &mut tags,
+        "git.branch",
+        attr_string(attributes, "git.branch"),
+    );
+    insert_tag_if_present(
+        &mut tags,
+        "worktree.agent",
+        attr_string(attributes, "worktree.agent"),
+    );
+    insert_tag_if_present(
+        &mut tags,
+        "worktree.task",
+        attr_string(attributes, "worktree.task"),
+    );
+    insert_tag_if_present(
+        &mut tags,
+        "contract.file",
+        attr_string(attributes, "contract.file"),
+    );
+    insert_tag_if_present(
+        &mut tags,
+        "contract.id",
+        attr_string(attributes, "contract.id"),
+    );
+
     tags
 }
 
