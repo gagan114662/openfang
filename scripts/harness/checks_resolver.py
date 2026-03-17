@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RISK_ORDER = ["high", "medium", "low"]
+RISK_ORDER = ["critical", "high", "medium", "low"]
 
 
 def normalize_path(path: str) -> str:
@@ -65,11 +65,34 @@ def compute_required_checks(contract: Dict[str, Any], risk_tier: str) -> List[st
     merge_policy = contract.get("mergePolicy", {})
     tier_policy = merge_policy.get(risk_tier, {})
     checks = tier_policy.get("requiredChecks", [])
-    return [str(check) for check in checks]
+    if checks:
+        return [str(check) for check in checks]
+
+    # Backward-compatible fallback for older contract shape.
+    risk_tiers = contract.get("riskTiers", {})
+    legacy_checks = risk_tiers.get(risk_tier, {}).get("requiredChecks", [])
+    return [str(check) for check in legacy_checks]
 
 
-def evaluate_docs_drift(changed_files: List[str], docs_drift_rules: List[Dict[str, Any]]) -> List[str]:
+def evaluate_docs_drift(changed_files: List[str], docs_drift_rules: Any) -> List[str]:
     violations: List[str] = []
+
+    # Backward-compatible fallback for older contract shape.
+    if isinstance(docs_drift_rules, dict):
+        touched_patterns = [str(item) for item in docs_drift_rules.get("requireDocsUpdate", [])]
+        required_any = [str(item) for item in docs_drift_rules.get("docsFiles", [])]
+        if touched_patterns and required_any:
+            touched = any_path_matches(changed_files, touched_patterns)
+            doc_updated = any_path_matches(changed_files, required_any)
+            if touched and not doc_updated:
+                violations.append(
+                    "docs drift rule 'legacy-requireDocsUpdate' violated: "
+                    f"changes touched {touched_patterns} but none of {required_any} were updated"
+                )
+        return violations
+
+    if not isinstance(docs_drift_rules, list):
+        return violations
 
     for rule in docs_drift_rules:
         name = str(rule.get("name", "unnamed-rule"))
@@ -93,6 +116,9 @@ def evaluate_docs_drift(changed_files: List[str], docs_drift_rules: List[Dict[st
 def requires_browser_evidence(changed_files: List[str], contract: Dict[str, Any]) -> bool:
     evidence_policy = contract.get("evidencePolicy", {})
     paths = evidence_policy.get("uiImpactPaths", [])
+    if not paths:
+        # Backward-compatible fallback for older contract shape.
+        paths = contract.get("browserEvidenceRequirements", {}).get("uiChangePaths", [])
     return any_path_matches(changed_files, paths)
 
 

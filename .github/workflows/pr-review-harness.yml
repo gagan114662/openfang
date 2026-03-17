@@ -1,0 +1,195 @@
+name: pr-review-harness
+
+on:
+  workflow_run:
+    workflows: [risk-policy-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  pr-review-harness:
+    name: pr-review-harness
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download risk policy artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: risk-policy-report
+          path: artifacts
+
+      - name: Parse gate context
+        id: ctx
+        run: |
+          REPORT="artifacts/risk-policy-report.json"
+          test -f "$REPORT"
+
+          pr_number=$(jq -r '.pr_number' "$REPORT")
+          head_sha=$(jq -r '.head_sha' "$REPORT")
+          sentry_required=$(jq -r '.required_checks | index("sentry-live-validate") != null' "$REPORT")
+
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "sentry_required=$sentry_required" >> "$GITHUB_OUTPUT"
+
+      - name: Run Sentry live validation
+        id: sentry
+        if: ${{ steps.ctx.outputs.sentry_required == 'true' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          OPENFANG_SENTRY_AUTH_TOKEN: ${{ secrets.OPENFANG_SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG_SLUG: ${{ vars.SENTRY_ORG_SLUG }}
+          OPENFANG_SENTRY_ORG: ${{ vars.OPENFANG_SENTRY_ORG }}
+          SENTRY_PROJECT_SLUG: ${{ vars.SENTRY_PROJECT_SLUG }}
+          OPENFANG_SENTRY_PROJECT: ${{ vars.OPENFANG_SENTRY_PROJECT }}
+        run: |
+          mkdir -p artifacts
+          export SENTRY_AUTH_TOKEN="${SENTRY_AUTH_TOKEN:-$OPENFANG_SENTRY_AUTH_TOKEN}"
+          org="${SENTRY_ORG_SLUG:-$OPENFANG_SENTRY_ORG}"
+          project="${SENTRY_PROJECT_SLUG:-$OPENFANG_SENTRY_PROJECT}"
+
+          if [ -z "$org" ] || [ -z "$project" ]; then
+            python3 - <<'PY'
+            import json
+            from pathlib import Path
+            payload = {
+                "status": "missing",
+                "ok": False,
+                "errors": ["missing SENTRY_ORG_SLUG or SENTRY_PROJECT_SLUG repository variables"],
+            }
+            Path("artifacts/sentry-logs-validation.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            PY
+            echo "exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          python3 scripts/harness/sentry_logs_live_validate.py \
+            --org "$org" \
+            --project "$project" \
+            --head-sha "${{ steps.ctx.outputs.head_sha }}" \
+            --token-env SENTRY_AUTH_TOKEN \
+            --out artifacts/sentry-logs-validation.json
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Write default sentry report when not required
+        if: ${{ steps.ctx.outputs.sentry_required != 'true' }}
+        run: |
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = {
+              "status": "not-required",
+              "ok": True,
+              "errors": [],
+          }
+          Path("artifacts/sentry-logs-validation.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Build PR packet + checklist
+        id: packet
+        run: |
+          set +e
+          python3 scripts/harness/pr_packet.py \
+            --risk-report artifacts/risk-policy-report.json \
+            --review-findings artifacts/review-findings.json \
+            --claude-findings artifacts/claude-findings.json \
+            --browser-evidence-manifest artifacts/browser-evidence-manifest.json \
+            --sentry-validation-report artifacts/sentry-logs-validation.json \
+            --out-json artifacts/pr-review-packet.json \
+            --out-md artifacts/pr-review-packet.md
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Publish checklist + evidence markers to PR
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.ctx.outputs.pr_number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = Number(process.env.PR_NUMBER || '0');
+            if (!prNumber) {
+              core.setFailed('missing PR number from risk policy report');
+              return;
+            }
+
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+            const markerStart = '<!-- pr-review-checklist:start -->';
+            const markerEnd = '<!-- pr-review-media:end -->';
+            const body = fs.readFileSync('artifacts/pr-review-packet.md', 'utf8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const existing = comments.find((c) =>
+              typeof c.body === 'string' && c.body.includes(markerStart) && c.body.includes(markerEnd),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+      - name: Upload PR review harness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-review-harness
+          path: |
+            artifacts/pr-review-packet.json
+            artifacts/pr-review-packet.md
+            artifacts/sentry-logs-validation.json
+          if-no-files-found: error
+
+      - name: Enforce PR review readiness gate
+        if: always()
+        run: |
+          packet_code="${{ steps.packet.outputs.exit_code }}"
+          sentry_required="${{ steps.ctx.outputs.sentry_required }}"
+          sentry_code="${{ steps.sentry.outputs.exit_code || '0' }}"
+
+          if [ "$packet_code" != "0" ]; then
+            echo "PR packet gate failed (acceptance checklist not clean)."
+            exit 1
+          fi
+
+          if [ "$sentry_required" = "true" ] && [ "$sentry_code" != "0" ]; then
+            echo "Sentry live validation failed."
+            exit 1
+          fi

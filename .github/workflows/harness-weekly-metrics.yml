@@ -93,11 +93,11 @@ jobs:
           high_pass = sum(1 for report in high_reports if report.get('decision') == 'pass')
           high_tier_pass_rate = (high_pass / len(high_reports)) if high_reports else 1.0
 
-          remediation_runs_url = f'https://api.github.com/repos/{repo}/actions/workflows/remediation-agent.yml/runs?per_page=100'
+          remediation_runs_url = f'https://api.github.com/repos/{repo}/actions/workflows/claude-remediation-agent.yml/runs?per_page=100'
           remediation_runs = get_json(remediation_runs_url).get('workflow_runs', [])
           remediation_recent = [
               run for run in remediation_runs
-              if parse_iso(run['created_at']) >= week_ago and run.get('event') == 'workflow_run'
+              if parse_iso(run['created_at']) >= week_ago and run.get('event') == 'pull_request'
           ]
           remediation_total = len(remediation_recent)
           remediation_success = sum(1 for run in remediation_recent if run.get('conclusion') == 'success')

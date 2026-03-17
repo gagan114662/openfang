@@ -1,0 +1,163 @@
+name: claude-remediation-agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: claude-remediation-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-remediation-agent:
+    name: claude-remediation-agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          clean: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Ingest Claude findings for current head
+        id: ingest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          set +e
+          python3 scripts/harness/claude_feedback_ingest.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --out artifacts/claude-findings.json
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Parse remediation eligibility
+        id: parse
+        run: |
+          cfg_enabled=$(jq -r '.automation.claudeRemediation.enabled // true' .harness/policy.contract.json)
+          require_ingestion=$(jq -r '.automation.claudeRemediation.requireFindingsIngestion // true' .harness/policy.contract.json)
+          status=$(jq -r '.status // "missing"' artifacts/claude-findings.json)
+          actionable_count=$(jq '[.findings[] | select(.actionable == true)] | length' artifacts/claude-findings.json)
+
+          should_run="false"
+          if [ "$cfg_enabled" = "true" ] && [ "$actionable_count" -gt 0 ]; then
+            if [ "$require_ingestion" = "true" ]; then
+              if [ "$status" = "success" ]; then
+                should_run="true"
+              fi
+            else
+              should_run="true"
+            fi
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "actionable_count=$actionable_count" >> "$GITHUB_OUTPUT"
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+      - name: Check one-attempt-per-SHA guard
+        if: ${{ steps.parse.outputs.should_run == 'true' }}
+        id: attempt_guard
+        run: |
+          marker="harness-remediation: ${{ github.event.pull_request.head.sha }}"
+          if git log --oneline --grep "$marker" -n 1 | grep -q .; then
+            echo "already_attempted=true" >> "$GITHUB_OUTPUT"
+            mkdir -p artifacts
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            python3 - "$head_sha" <<'PY'
+            import json
+            import sys
+            from pathlib import Path
+
+            head_sha = sys.argv[1]
+            payload = {
+                "head_sha_in": head_sha,
+                "head_sha_out": head_sha,
+                "applied": False,
+                "files_touched": [],
+                "validation_passed": False,
+                "errors": ["max remediation attempts exceeded for SHA"],
+            }
+            Path("artifacts/remediation-result.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            PY
+          else
+            echo "already_attempted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run constrained remediation
+        if: ${{ steps.parse.outputs.should_run == 'true' && steps.attempt_guard.outputs.already_attempted == 'false' }}
+        id: remediate
+        env:
+          REMEDIATION_APPLY_CMD: ${{ vars.OPENFANG_REMEDIATION_CMD }}
+        run: |
+          mkdir -p artifacts
+          set +e
+          python3 scripts/harness/remediation_runner.py \
+            --findings artifacts/claude-findings.json \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --apply-cmd "${REMEDIATION_APPLY_CMD}" \
+            --result-out artifacts/remediation-result.json
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push remediation fix
+        if: ${{ steps.parse.outputs.should_run == 'true' && steps.attempt_guard.outputs.already_attempted == 'false' && steps.remediate.outputs.exit_code == '0' }}
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No remediation changes to commit"
+            exit 0
+          fi
+
+          git config user.name "openfang-remediation-bot"
+          git config user.email "openfang-remediation-bot@users.noreply.github.com"
+
+          git add -A
+          git commit -m "chore(harness): claude remediation for sha:${{ github.event.pull_request.head.sha }}" -m "harness-remediation: ${{ github.event.pull_request.head.sha }}"
+          git push origin HEAD:${{ github.head_ref }}
+
+          new_sha=$(git rev-parse HEAD)
+          tmp=$(mktemp)
+          jq --arg sha "$new_sha" '.head_sha_out = $sha' artifacts/remediation-result.json > "$tmp"
+          mv "$tmp" artifacts/remediation-result.json
+
+      - name: Upload remediation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-remediation-result
+          path: |
+            artifacts/claude-findings.json
+            artifacts/remediation-result.json
+          if-no-files-found: ignore
+
+      - name: Fail workflow when remediation fails
+        if: ${{ steps.parse.outputs.should_run == 'true' && steps.attempt_guard.outputs.already_attempted == 'false' && steps.remediate.outputs.exit_code != '0' }}
+        run: |
+          echo "Claude remediation failed. PR remains blocked."
+          exit 1
+
+      - name: Fail workflow when ingestion is required but missing
+        if: ${{ steps.parse.outputs.status != 'success' }}
+        run: |
+          required=$(jq -r '.automation.claudeRemediation.requireFindingsIngestion // true' .harness/policy.contract.json)
+          if [ "$required" = "true" ]; then
+            echo "Claude ingestion is required and did not succeed for current head SHA"
+            exit 1
+          fi

@@ -1,161 +1,210 @@
 {
-  "version": "1.0.0",
-  "description": "OpenFang Harness Policy Contract - defines risk tiers, required checks, and rollout phases",
+  "version": "1",
   "rolloutPolicy": {
-    "currentPhase": "phase-0",
-    "runFanoutOnGateFailure": true,
+    "currentPhase": "phase-2",
+    "runFanoutOnGateFailure": false,
     "phases": {
       "phase-0": {
-        "description": "Advisory baseline and metrics collection",
+        "description": "Advisory baseline",
         "enforceMergeBlock": false,
-        "enableRemediation": false
+        "enforceReviewState": false,
+        "enforceDocsDrift": false,
+        "enableRemediation": false,
+        "requireEvidence": false
       },
       "phase-1": {
-        "description": "Block stale review/docs drift, pilot remediation on labeled PRs",
+        "description": "Current-head review enforcement",
         "enforceMergeBlock": true,
-        "enableRemediation": "labeled-only",
-        "remediationLabel": "harness-remediation-pilot"
+        "enforceReviewState": true,
+        "enforceDocsDrift": true,
+        "enableRemediation": false,
+        "requireEvidence": false
       },
       "phase-2": {
-        "description": "Enforce constrained remediation + evidence requirements",
+        "description": "Strict Claude+Codex pre-approval loop",
         "enforceMergeBlock": true,
+        "enforceReviewState": true,
+        "enforceDocsDrift": true,
         "enableRemediation": true,
         "requireEvidence": true
-      },
-      "phase-3": {
-        "description": "Full hard enforcement",
-        "enforceMergeBlock": true,
-        "enableRemediation": true,
-        "requireEvidence": true,
-        "strictReview": true
       }
     }
   },
-  "riskTiers": {
-    "critical": {
-      "description": "Changes to core runtime, kernel, or memory systems",
-      "paths": [
-        "crates/openfang-runtime/**",
-        "crates/openfang-kernel/**",
-        "crates/openfang-memory/**",
-        "crates/openfang-types/src/agent.rs",
-        "crates/openfang-types/src/capability.rs"
-      ],
-      "requiredChecks": [
-        "build",
-        "test",
-        "clippy",
-        "security-audit",
-        "integration-tests",
-        "code-review"
-      ],
-      "reviewPolicy": {
-        "minApprovals": 2,
-        "requireOwnerReview": true
-      }
-    },
-    "high": {
-      "description": "Changes to API, channels, or CLI",
-      "paths": [
-        "crates/openfang-api/**",
-        "crates/openfang-channels/**",
-        "crates/openfang-cli/**",
-        "crates/openfang-telegram/**"
-      ],
-      "requiredChecks": [
-        "build",
-        "test",
-        "clippy",
-        "integration-tests"
-      ],
-      "reviewPolicy": {
-        "minApprovals": 1
-      }
-    },
-    "medium": {
-      "description": "Changes to extensions, skills, or hands",
-      "paths": [
-        "crates/openfang-extensions/**",
-        "crates/openfang-skills/**",
-        "crates/openfang-hands/**",
-        "agents/**"
-      ],
-      "requiredChecks": [
-        "build",
-        "test",
-        "clippy"
-      ],
-      "reviewPolicy": {
-        "minApprovals": 1
-      }
-    },
-    "low": {
-      "description": "Documentation, configs, or scripts",
-      "paths": [
-        "docs/**",
-        "*.md",
-        "scripts/**",
-        "*.toml.example",
-        ".github/**"
-      ],
-      "requiredChecks": [
-        "docs-lint"
-      ],
-      "reviewPolicy": {
-        "minApprovals": 0
-      }
-    }
-  },
-  "docsDriftRules": {
-    "requireDocsUpdate": [
-      "crates/openfang-api/src/routes.rs",
-      "crates/openfang-types/src/config.rs"
+  "riskTierRules": {
+    "critical": [
+      "crates/openfang-runtime/**",
+      "crates/openfang-kernel/**",
+      "crates/openfang-memory/**",
+      "crates/openfang-types/src/agent.rs",
+      "crates/openfang-types/src/capability.rs"
     ],
-    "docsFiles": [
-      "docs/configuration.md",
-      "docs/cli-reference.md",
-      "docs/architecture.md",
-      "README.md"
+    "high": [
+      "crates/openfang-api/**",
+      "crates/openfang-channels/**",
+      "crates/openfang-cli/**",
+      "crates/openfang-telegram/**"
     ],
-    "maxStaleDays": 30
-  },
-  "reviewPolicySemantics": {
-    "staleThresholdMinutes": 60,
-    "timeoutThresholdMinutes": 120,
-    "validStates": [
-      "success",
-      "queued",
-      "in_progress"
+    "medium": [
+      "crates/openfang-extensions/**",
+      "crates/openfang-skills/**",
+      "crates/openfang-hands/**",
+      "agents/**"
     ],
-    "invalidStates": [
-      "failed",
-      "timeout",
-      "cancelled",
-      "skipped"
+    "low": [
+      "**"
     ]
   },
-  "rerunCommentDedupeMarker": "<!-- greptile-rerun-request -->",
-  "remediationGuardrails": {
-    "allowedPaths": [
+  "mergePolicy": {
+    "critical": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "claude-remediation-agent",
+        "pr-review-harness",
+        "ci-check",
+        "ci-test",
+        "ci-clippy",
+        "ci-fmt",
+        "ci-audit",
+        "ci-secrets",
+        "sentry-live-validate"
+      ]
+    },
+    "high": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "claude-remediation-agent",
+        "pr-review-harness",
+        "ci-check",
+        "ci-test",
+        "ci-clippy",
+        "ci-fmt",
+        "sentry-live-validate"
+      ]
+    },
+    "medium": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "claude-remediation-agent",
+        "pr-review-harness",
+        "ci-check",
+        "ci-test",
+        "ci-clippy"
+      ]
+    },
+    "low": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "claude-remediation-agent",
+        "pr-review-harness",
+        "ci-check"
+      ]
+    }
+  },
+  "reviewPolicy": {
+    "provider": "greptile",
+    "checkRunName": "greptile-review",
+    "timeoutMinutes": 20,
+    "weakConfidenceThreshold": 0.55,
+    "actionableSummaryKeywords": [
+      "vulnerability",
+      "security",
+      "exploit",
+      "auth bypass",
+      "injection",
+      "rce",
+      "critical"
+    ]
+  },
+  "reviewProviders": {
+    "providers": {
+      "greptile": {
+        "enforcement": "required",
+        "requireCurrentHeadIngestion": true,
+        "checkRunName": "greptile-review"
+      },
+      "claude": {
+        "enforcement": "required",
+        "requireCurrentHeadIngestion": true,
+        "marker": "<!-- claude-review-findings -->",
+        "weakConfidenceThreshold": 0.55,
+        "actionableSummaryKeywords": [
+          "vulnerability",
+          "security",
+          "critical",
+          "data leak",
+          "broken auth"
+        ],
+        "github": {
+          "trustedAppIdsEnv": "OPENFANG_CLAUDE_TRUSTED_APP_IDS",
+          "trustedLogins": [
+            "claude[bot]"
+          ],
+          "maintainerAllowlist": []
+        }
+      }
+    }
+  },
+  "automation": {
+    "claudeRemediation": {
+      "enabled": true,
+      "runOnEverySync": true,
+      "requireFindingsIngestion": true,
+      "maxAttemptsPerSha": 1
+    }
+  },
+  "docsDriftRules": [
+    {
+      "name": "api-docs-drift",
+      "whenTouched": [
+        "crates/openfang-api/src/**",
+        "crates/openfang-types/src/config.rs"
+      ],
+      "requireAny": [
+        "docs/api-reference.md",
+        "docs/configuration.md",
+        "README.md"
+      ]
+    }
+  ],
+  "evidencePolicy": {
+    "uiImpactPaths": [
+      "crates/openfang-api/static/**",
+      "crates/openfang-desktop/**",
+      "frontend/**"
+    ],
+    "requiredFlows": [
+      "app-launch",
+      "changed-feature-path"
+    ],
+    "requiredAssertions": [
+      "entrypoint.embedded_browser",
+      "identity.expected_account"
+    ]
+  },
+  "remediationPolicy": {
+    "maxAttemptsPerSha": 1,
+    "allowedPathGlobs": [
       "crates/**/src/**/*.rs",
       "tests/**/*.rs",
-      "docs/**/*.md"
+      "docs/**/*.md",
+      "scripts/**/*.py"
     ],
-    "blockedPaths": [
+    "forbiddenPathGlobs": [
       ".git/**",
       ".github/**",
       "target/**",
-      "Cargo.lock"
+      "Cargo.lock",
+      ".harness/**"
     ],
-    "maxFilesPerPR": 10,
-    "maxLinesPerFile": 500
+    "validationCommands": [
+      "cargo check --workspace"
+    ]
   },
-  "browserEvidenceRequirements": {
-    "uiChangePaths": [
-      "crates/openfang-api/static/**",
-      "crates/openfang-desktop/**"
-    ],
-    "requiredScreenshots": 2,
-    "requireBeforeAfter": true
+  "rerunPolicy": {
+    "marker": "<!-- review-agent-auto-rerun -->"
+  },
+  "sentryPolicy": {
+    "query": "is:unresolved level:error",
+    "tokenEnv": "SENTRY_AUTH_TOKEN"
   }
 }

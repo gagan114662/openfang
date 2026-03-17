@@ -27,7 +27,7 @@
     },
     "risk_tier": {
       "type": "string",
-      "enum": ["high", "medium", "low"]
+      "enum": ["critical", "high", "medium", "low"]
     },
     "changed_files": {
       "type": "array",
@@ -56,9 +56,20 @@
         "check_run_url": {"type": "string"}
       }
     },
+    "provider_states": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "actionable_findings_count": {
       "type": "integer",
       "minimum": 0
+    },
+    "provider_actionable_findings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
     },
     "decision": {
       "type": "string",
@@ -78,6 +89,14 @@
       "type": "string"
     },
     "rollout": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "infra_preflight": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "live_provider": {
       "type": "object",
       "additionalProperties": true
     }

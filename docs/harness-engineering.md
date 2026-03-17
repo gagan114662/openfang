@@ -25,20 +25,21 @@ PR sequence is strictly ordered:
 
 1. `risk-policy-gate` runs first on PR open/sync.
 2. Gate computes risk tier and required checks from changed files.
-3. Gate validates current-head `greptile-review` state.
-4. Gate emits `risk-policy-report.json` + normalized `review-findings.json`.
+3. Gate validates current-head `greptile-review` state and required Claude ingestion state.
+4. Gate emits `risk-policy-report.json` + normalized `review-findings.json` and `claude-findings.json`.
 5. If gate passes, `ci-fanout` runs only required CI jobs.
-6. If gate returns `needs-remediation`, `remediation-agent` can patch in-branch (constrained).
+6. `claude-remediation-agent` runs on every PR sync, applies constrained Codex remediation for actionable Claude findings, and pushes fixes in-branch.
 7. If gate returns stale or timeout review states, `greptile-rerun` posts one deduped rerun comment per SHA.
 8. After clean rerun, `greptile-auto-resolve-threads` can resolve bot-only unresolved threads.
-9. `sentry-remediation-agent` (scheduled or manual) can ingest unresolved Sentry issues, normalize findings, and open constrained remediation PRs.
+9. `pr-review-harness` publishes acceptance checklist + execution evidence markers in PR comments and enforces browser evidence + Sentry live validation readiness.
+10. `sentry-remediation-agent` (scheduled or manual) can ingest unresolved Sentry issues, normalize findings, and open constrained remediation PRs.
 
 ## Current-Head SHA Discipline
 
 Review is valid only when tied to current PR head SHA:
 
 - stale review states are rejected
-- missing current-head review fails policy semantics
+- missing current-head review (Greptile or Claude required provider) fails policy semantics
 - timeout and non-success review states are treated as gate failures
 - rerun requests are deduplicated using marker + `sha:<head_sha>`
 
@@ -53,7 +54,9 @@ Fields:
 - `pr_number`, `head_sha`, `risk_tier`, `changed_files`
 - `required_checks`
 - `review_state`
+- `provider_states`
 - `actionable_findings_count`
+- `provider_actionable_findings`
 - `decision` (`pass|fail|needs-remediation|stale-review|timeout`)
 - `reasons`, `timestamp`
 
@@ -74,7 +77,8 @@ Produced by `scripts/harness/remediation_runner.py`.
 - `.github/workflows/risk-policy-gate.yml`
 - `.github/workflows/ci-fanout.yml`
 - `.github/workflows/greptile-rerun.yml`
-- `.github/workflows/remediation-agent.yml`
+- `.github/workflows/claude-remediation-agent.yml`
+- `.github/workflows/pr-review-harness.yml`
 - `.github/workflows/greptile-auto-resolve-threads.yml`
 - `.github/workflows/harness-weekly-metrics.yml`
 - `.github/workflows/sentry-remediation-agent.yml`
@@ -84,9 +88,8 @@ Produced by `scripts/harness/remediation_runner.py`.
 Configured in contract `rolloutPolicy`:
 
 - `phase-0`: advisory baseline and metrics
-- `phase-1`: block stale review/docs drift, run remediation only for PRs labeled `harness-remediation-pilot`
-- `phase-2`: enforce constrained remediation + evidence
-- `phase-3`: hard enforcement
+- `phase-1`: block stale review/docs drift
+- `phase-2`: enforce constrained Claude remediation + browser evidence + Sentry live validation
 
 Change `rolloutPolicy.currentPhase` to progress enforcement.
 

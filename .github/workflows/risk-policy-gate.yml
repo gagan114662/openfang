@@ -40,6 +40,23 @@ jobs:
           echo "Changed files:"
           cat changed_files.txt
 
+      - name: Ingest Claude feedback
+        id: claude_ingest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+
+          set +e
+          python3 scripts/harness/claude_feedback_ingest.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --out artifacts/claude-findings.json
+          ingest_code=$?
+          set -e
+          echo "claude_ingest_exit_code=$ingest_code" >> "$GITHUB_OUTPUT"
+
       - name: Run risk policy gate
         id: gate
         env:
@@ -53,6 +70,7 @@ jobs:
             --changed-files changed_files.txt \
             --repo "${{ github.repository }}" \
             --review-findings artifacts/review-findings.json \
+            --claude-findings artifacts/claude-findings.json \
             --report-out artifacts/risk-policy-report.json
           code=$?
           set -e
@@ -69,6 +87,7 @@ jobs:
           path: |
             artifacts/risk-policy-report.json
             artifacts/review-findings.json
+            artifacts/claude-findings.json
           if-no-files-found: error
 
       - name: Enforce gate status
@@ -84,4 +103,5 @@ jobs:
         run: |
           echo "## Risk Policy Gate" >> "$GITHUB_STEP_SUMMARY"
           echo "- Decision: ${{ steps.gate.outputs.decision }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Claude ingestion exit code: ${{ steps.claude_ingest.outputs.claude_ingest_exit_code }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Report artifact: risk-policy-report" >> "$GITHUB_STEP_SUMMARY"
