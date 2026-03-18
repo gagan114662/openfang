@@ -19,7 +19,7 @@ use openfang_api::server::read_daemon_info;
 use openfang_kernel::OpenFangKernel;
 use openfang_types::agent::{AgentId, AgentManifest};
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::Ordering;
@@ -1011,6 +1011,79 @@ pub(crate) fn daemon_json(
             }
             std::process::exit(1);
         }
+    }
+}
+
+fn remote_uses_embedded_credentials(url: &str) -> bool {
+    url.starts_with("https://")
+        && url
+            .strip_prefix("https://")
+            .map(|rest| rest.split('/').next().unwrap_or(rest).contains('@'))
+            .unwrap_or(false)
+}
+
+fn git_remote_rows(repo_root: &Path) -> Vec<(String, String, String)> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["remote", "-v"])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let name = parts.next()?.to_string();
+            let url = parts.next()?.to_string();
+            let kind = parts
+                .next()
+                .map(|value| value.trim_matches(|c| c == '(' || c == ')').to_string())?;
+            Some((name, url, kind))
+        })
+        .collect()
+}
+
+fn command_on_path(command: &str) -> bool {
+    let Some(path_os) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_os).any(|entry| {
+        let candidate = entry.join(command);
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            let exe = entry.join(format!("{command}.exe"));
+            if exe.is_file() {
+                return true;
+            }
+        }
+        false
+    })
+}
+
+fn detect_git_repo_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
     }
 }
 
@@ -2626,6 +2699,115 @@ decay_rate = 0.05
                 ui::check_warn("Node.js not found (needed for Node skill runtime)");
             }
             checks.push(serde_json::json!({"check": "node", "status": "warn"}));
+        }
+    }
+
+    if let Some(repo_root) = detect_git_repo_root() {
+        if !json {
+            println!("\n  Cowork / Desktop:");
+        }
+
+        let remotes = git_remote_rows(&repo_root);
+        if !remotes.is_empty() {
+            let credentialed: Vec<String> = remotes
+                .iter()
+                .filter(|(_, url, _)| remote_uses_embedded_credentials(url))
+                .map(|(name, _, kind)| format!("{name} ({kind})"))
+                .collect();
+            if credentialed.is_empty() {
+                if !json {
+                    ui::check_ok("Git remotes do not embed credentials");
+                }
+                checks.push(serde_json::json!({"check": "git_remote_hygiene", "status": "ok"}));
+            } else {
+                if !json {
+                    ui::check_fail(&format!(
+                        "Credential-bearing git remotes detected: {}",
+                        credentialed.join(", ")
+                    ));
+                }
+                checks.push(serde_json::json!({"check": "git_remote_hygiene", "status": "fail", "remotes": credentialed}));
+                all_ok = false;
+            }
+
+            let has_myfork = remotes.iter().any(|(name, _, _)| name == "myfork");
+            if has_myfork {
+                if !json {
+                    ui::check_ok("Canonical automation remote present: myfork");
+                }
+                checks.push(serde_json::json!({"check": "git_remote_myfork", "status": "ok"}));
+            } else {
+                if !json {
+                    ui::check_warn("Canonical automation remote missing: myfork");
+                }
+                checks.push(serde_json::json!({"check": "git_remote_myfork", "status": "warn"}));
+            }
+
+            let has_origin = remotes.iter().any(|(name, _, _)| name == "origin");
+            if has_origin {
+                if !json {
+                    ui::check_ok("Upstream sync remote present: origin");
+                }
+                checks.push(serde_json::json!({"check": "git_remote_origin", "status": "ok"}));
+            } else {
+                if !json {
+                    ui::check_warn("Upstream sync remote missing: origin");
+                }
+                checks.push(serde_json::json!({"check": "git_remote_origin", "status": "warn"}));
+            }
+        }
+
+        let mcp_manifest = repo_root.join(".mcp.json");
+        if mcp_manifest.exists() {
+            if !json {
+                ui::check_ok("Repo-local Claude Desktop MCP manifest found");
+            }
+            checks.push(serde_json::json!({"check": "repo_mcp_manifest", "status": "ok", "path": mcp_manifest.display().to_string()}));
+        } else {
+            if !json {
+                ui::check_warn("Repo-local Claude Desktop MCP manifest missing (.mcp.json)");
+            }
+            checks.push(serde_json::json!({"check": "repo_mcp_manifest", "status": "warn"}));
+        }
+
+        let hooks_path = repo_root.join(".claude").join("settings.json");
+        if hooks_path.exists() {
+            if !json {
+                ui::check_ok("Claude hook policy found");
+            }
+            checks.push(serde_json::json!({"check": "claude_hooks", "status": "ok", "path": hooks_path.display().to_string()}));
+        } else {
+            if !json {
+                ui::check_warn("Claude hook policy missing (.claude/settings.json)");
+            }
+            checks.push(serde_json::json!({"check": "claude_hooks", "status": "warn"}));
+        }
+
+        let guard_script = repo_root.join("scripts").join("worktree").join("guard.sh");
+        if guard_script.exists() {
+            if !json {
+                ui::check_ok("Worktree guard script found");
+            }
+            checks.push(serde_json::json!({"check": "worktree_guard", "status": "ok", "path": guard_script.display().to_string()}));
+        } else {
+            if !json {
+                ui::check_warn("Worktree guard script missing");
+            }
+            checks.push(serde_json::json!({"check": "worktree_guard", "status": "warn"}));
+        }
+
+        for command in ["of-claude", "of-codex", "claude"] {
+            if command_on_path(command) {
+                if !json {
+                    ui::check_ok(&format!("Launcher on PATH: {command}"));
+                }
+                checks.push(serde_json::json!({"check": "launcher_path", "status": "ok", "command": command}));
+            } else {
+                if !json {
+                    ui::check_warn(&format!("Launcher missing on PATH: {command}"));
+                }
+                checks.push(serde_json::json!({"check": "launcher_path", "status": "warn", "command": command}));
+            }
         }
     }
 
@@ -5674,5 +5856,19 @@ args = ["-y", "@modelcontextprotocol/server-github"]
             HookEvent::AgentLoopEnd,
         ];
         assert_eq!(events.len(), 4);
+    }
+
+    #[test]
+    fn test_doctor_remote_hygiene_detects_credentials() {
+        assert!(super::remote_uses_embedded_credentials(
+            "https://token@github.com/example/repo.git"
+        ));
+    }
+
+    #[test]
+    fn test_doctor_remote_hygiene_allows_clean_https() {
+        assert!(!super::remote_uses_embedded_credentials(
+            "https://github.com/example/repo.git"
+        ));
     }
 }

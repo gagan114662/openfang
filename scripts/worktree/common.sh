@@ -133,6 +133,43 @@ canonical_sync_remote() {
   return 1
 }
 
+remote_uses_embedded_credentials() {
+  [[ "$1" =~ ^https://[^/@]+@ ]]
+}
+
+redact_remote_url() {
+  local url="$1"
+  if remote_uses_embedded_credentials "$url"; then
+    printf '%s\n' "$url" | sed -E 's#^(https://)[^/@]+@#\1<redacted>@#'
+  else
+    printf '%s\n' "$url"
+  fi
+}
+
+git_remote_urls() {
+  git -C "$(repo_root)" remote -v 2>/dev/null || true
+}
+
+credentialed_git_remotes() {
+  local name url kind clean_kind
+  while read -r name url kind; do
+    [[ -n "$name" && -n "$url" ]] || continue
+    if remote_uses_embedded_credentials "$url"; then
+      clean_kind="${kind#(}"
+      clean_kind="${clean_kind%)}"
+      printf '%s\t%s\t%s\n' "$name" "$clean_kind" "$(redact_remote_url "$url")"
+    fi
+  done < <(git_remote_urls)
+}
+
+has_credentialed_git_remotes() {
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || return 0
+  done < <(credentialed_git_remotes)
+  return 1
+}
+
 canonical_sync_branch() {
   printf '%s\n' "${OPENFANG_CANONICAL_PUSH_BRANCH:-main}"
 }

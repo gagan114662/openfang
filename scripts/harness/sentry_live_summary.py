@@ -6,17 +6,13 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore
+from sentry_common import load_sentry_config, resolve_sentry_token, resolve_sentry_value
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,19 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", choices=("json", "text"), default="json", help="Output format")
     parser.add_argument("--out", help="Optional output file path")
     return parser.parse_args()
-
-
-def load_config(path: str) -> Dict[str, Any]:
-    return tomllib.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def resolve_token(sentry_cfg: Dict[str, Any]) -> str:
-    env_name = str(sentry_cfg.get("auth_token_env") or "").strip()
-    if env_name:
-        token = os.getenv(env_name, "").strip()
-        if token:
-            return token
-    return str(sentry_cfg.get("auth_token") or "").strip()
 
 
 def sentry_get_json_with_headers(
@@ -224,17 +207,16 @@ def render_text(summary: Dict[str, Any]) -> str:
 
 def main() -> int:
     args = parse_args()
-    cfg = load_config(args.config)
-    sentry_cfg = cfg.get("sentry") or {}
+    sentry_cfg = load_sentry_config(args.config)
 
-    token = resolve_token(sentry_cfg)
+    token = resolve_sentry_token(sentry_cfg)
     if not token:
         raise SystemExit("Missing Sentry auth token in config or auth_token_env")
 
-    org = args.org or str(sentry_cfg.get("org_slug") or "").strip()
-    project = args.project or str(sentry_cfg.get("project_slug") or "").strip()
-    base_url = args.base_url or str(sentry_cfg.get("api_base_url") or "https://sentry.io").strip()
-    environment = args.environment or str(sentry_cfg.get("environment") or "").strip() or None
+    org = resolve_sentry_value(args.org, sentry_cfg, "org_slug", ["SENTRY_ORG_SLUG", "OPENFANG_SENTRY_ORG"])
+    project = resolve_sentry_value(args.project, sentry_cfg, "project_slug", ["SENTRY_PROJECT_SLUG", "OPENFANG_SENTRY_PROJECT"])
+    base_url = resolve_sentry_value(args.base_url, sentry_cfg, "api_base_url", ["SENTRY_BASE_URL", "OPENFANG_SENTRY_BASE_URL"], "https://sentry.io")
+    environment = resolve_sentry_value(args.environment, sentry_cfg, "environment", ["SENTRY_ENVIRONMENT", "OPENFANG_SENTRY_ENVIRONMENT"]) or None
 
     if not org or not project:
         raise SystemExit("Missing Sentry org/project configuration")

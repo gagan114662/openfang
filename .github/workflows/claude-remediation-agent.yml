@@ -137,6 +137,15 @@ jobs:
           jq --arg sha "$new_sha" '.head_sha_out = $sha' artifacts/remediation-result.json > "$tmp"
           mv "$tmp" artifacts/remediation-result.json
 
+      - name: Emit remediation telemetry marker
+        if: always()
+        run: |
+          python3 scripts/harness/emit_structured_event.py \
+            --event-kind github.remediation.claude.completed \
+            --body "Claude remediation workflow completed" \
+            --attributes-json "{\"repo\": \"${{ github.repository }}\", \"pr_number\": \"${{ github.event.pull_request.number }}\", \"head_sha\": \"${{ github.event.pull_request.head.sha }}\"}" \
+            --out artifacts/github-remediation-events.jsonl || true
+
       - name: Upload remediation artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -145,6 +154,7 @@ jobs:
           path: |
             artifacts/claude-findings.json
             artifacts/remediation-result.json
+            artifacts/github-remediation-events.jsonl
           if-no-files-found: ignore
 
       - name: Fail workflow when remediation fails

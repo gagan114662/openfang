@@ -10,6 +10,14 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  ci-git-remotes:
+    name: ci-git-remotes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate remote hygiene
+        run: python3 scripts/harness/validate_git_remotes.py --repo .
+
   ci-check:
     name: ci-check
     runs-on: ubuntu-latest

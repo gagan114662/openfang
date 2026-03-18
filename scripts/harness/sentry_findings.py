@@ -14,16 +14,19 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 
+from sentry_common import load_sentry_config, resolve_sentry_token, resolve_sentry_value
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect actionable Sentry issues for remediation")
-    parser.add_argument("--org", required=True, help="Sentry organization slug")
-    parser.add_argument("--project", required=True, help="Sentry project slug")
-    parser.add_argument("--base-url", default="https://sentry.io", help="Sentry base URL")
+    parser.add_argument("--org", help="Sentry organization slug")
+    parser.add_argument("--project", help="Sentry project slug")
+    parser.add_argument("--base-url", default="", help="Sentry base URL")
     parser.add_argument("--token-env", default="SENTRY_AUTH_TOKEN", help="Env var with Sentry auth token")
     parser.add_argument("--query", default="is:unresolved level:error", help="Sentry issue query")
     parser.add_argument("--limit", type=int, default=20, help="Maximum issues to fetch")
     parser.add_argument("--out", default="artifacts/sentry-findings.json", help="Output findings JSON path")
+    parser.add_argument("--config", default=str(Path.home() / ".openfang" / "config.toml"), help="OpenFang config path")
     parser.add_argument(
         "--allow-missing-token",
         action="store_true",
@@ -159,19 +162,28 @@ def _normalize_issue(issue: Dict[str, Any], idx: int) -> Dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    token = __import__("os").environ.get(args.token_env, "").strip()
+    sentry_cfg = load_sentry_config(args.config)
+    token = resolve_sentry_token(sentry_cfg, args.token_env)
+    org = resolve_sentry_value(args.org, sentry_cfg, "org_slug", ["SENTRY_ORG_SLUG", "OPENFANG_SENTRY_ORG"])
+    project = resolve_sentry_value(args.project, sentry_cfg, "project_slug", ["SENTRY_PROJECT_SLUG", "OPENFANG_SENTRY_PROJECT"])
+    base_url = resolve_sentry_value(args.base_url, sentry_cfg, "api_base_url", ["SENTRY_BASE_URL", "OPENFANG_SENTRY_BASE_URL"], "https://sentry.io")
 
     payload: Dict[str, Any] = {
         "provider": "sentry",
         "status": "missing",
         "head_sha": _git_head_sha(),
         "generated_at": dt.datetime.now(tz=dt.timezone.utc).isoformat(),
-        "org": args.org,
-        "project": args.project,
+        "org": org,
+        "project": project,
         "query": args.query,
         "findings": [],
         "errors": [],
     }
+
+    if not org or not project:
+        payload["errors"].append("missing Sentry org/project in args, env, or config")
+        _write_json(args.out, payload)
+        return 1
 
     if not token:
         message = f"missing token in env var: {args.token_env}"
@@ -183,9 +195,9 @@ def main() -> int:
 
     try:
         issues = _fetch_sentry_issues(
-            base_url=args.base_url,
-            org=args.org,
-            project=args.project,
+            base_url=base_url,
+            org=org,
+            project=project,
             token=token,
             query=args.query,
             limit=args.limit,

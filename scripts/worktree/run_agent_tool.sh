@@ -67,10 +67,11 @@ relock_root() {
 
 sync_claude_worktree_settings() {
   local dest="$1"
-  local hook_path settings_dir settings_path
+  local hook_path settings_dir settings_path local_settings_path
   hook_path="$REPO_ROOT/scripts/claude/claude_hook.py"
   settings_dir="$dest/.claude"
   settings_path="$settings_dir/settings.json"
+  local_settings_path="$settings_dir/settings.local.json"
 
   mkdir -p "$settings_dir"
   cat >"$settings_path" <<EOF
@@ -157,6 +158,16 @@ sync_claude_worktree_settings() {
       "Read(./.entire/metadata/**)"
     ]
   }
+}
+EOF
+
+  cat >"$local_settings_path" <<EOF
+{
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "contextplus",
+    "openfang"
+  ]
 }
 EOF
 }

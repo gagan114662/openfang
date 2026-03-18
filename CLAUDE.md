@@ -11,6 +11,9 @@ OpenFang is an open-source Agent Operating System written in Rust (14 crates).
   - `openfang` via `cargo run --quiet -p openfang-cli -- mcp`
   - `contextplus` for local semantic context
 - Repo-local Claude hooks live in `.claude/settings.json` and wrap `entire` through `scripts/claude/claude_hook.py`.
+- Install the managed launchers with `bash scripts/worktree/install_agent_launchers.sh`.
+- Verify Claude Desktop readiness with `python3 scripts/claude/check_desktop_setup.py --repo .`.
+- Recover stale locks or prunable worktrees with `bash scripts/worktree/recover.sh --repair`.
 - Canonical Claude lifecycle events are emitted as:
   - `claude.session.started`
   - `claude.session.ended`
@@ -173,7 +176,8 @@ Rules:
 - Claude edits belong on `claude/<task>` worktrees.
 - Codex edits belong on `codex/<task>` worktrees.
 - Never run Claude and Codex in the same worktree at the same time.
-- Raw `claude` and `codex` inside any OpenFang checkout or linked worktree prompt for a task name, then auto-route into the matching managed worktree.
+- `of-claude <task>` and `of-codex <task>` are the canonical entrypoints.
+- Raw `claude` inside any OpenFang checkout prompts for a task name, then auto-routes into the matching managed worktree.
 - Claude hook policy rejects sessions that were not launched through the guarded worktree path.
 - Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
 - Root lock auto-syncs the clean canonical branch to the configured remote before making the checkout read-only. Override the target with `OPENFANG_CANONICAL_PUSH_REMOTE` and `OPENFANG_CANONICAL_PUSH_BRANCH`. Extend the ignored-root list with `OPENFANG_ROOT_DIRTY_ALLOWLIST` using `:`-separated shell globs.

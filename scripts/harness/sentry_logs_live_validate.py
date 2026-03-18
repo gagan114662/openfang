@@ -6,24 +6,26 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 
+from sentry_common import load_sentry_config, resolve_sentry_token, resolve_sentry_value
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate live Sentry unresolved issues")
-    parser.add_argument("--org", required=True, help="Sentry organization slug")
-    parser.add_argument("--project", required=True, help="Sentry project slug")
+    parser.add_argument("--org", help="Sentry organization slug")
+    parser.add_argument("--project", help="Sentry project slug")
     parser.add_argument("--head-sha", required=True, help="Current PR head SHA")
-    parser.add_argument("--base-url", default="https://sentry.io", help="Sentry base URL")
+    parser.add_argument("--base-url", default="", help="Sentry base URL")
     parser.add_argument("--token-env", default="SENTRY_AUTH_TOKEN", help="Env var with Sentry auth token")
     parser.add_argument("--query", default="is:unresolved level:error", help="Sentry issue query")
     parser.add_argument("--limit", type=int, default=20, help="Maximum issue count to inspect")
     parser.add_argument("--out", default="artifacts/sentry-logs-validation.json", help="Output JSON report")
+    parser.add_argument("--config", default=str(Path.home() / ".openfang" / "config.toml"), help="OpenFang config path")
     return parser.parse_args()
 
 
@@ -51,13 +53,17 @@ def _fetch_issues(base_url: str, org: str, project: str, token: str, query: str,
 
 def main() -> int:
     args = parse_args()
-    token = os.getenv(args.token_env, "").strip()
+    sentry_cfg = load_sentry_config(args.config)
+    token = resolve_sentry_token(sentry_cfg, args.token_env)
+    org = resolve_sentry_value(args.org, sentry_cfg, "org_slug", ["SENTRY_ORG_SLUG", "OPENFANG_SENTRY_ORG"])
+    project = resolve_sentry_value(args.project, sentry_cfg, "project_slug", ["SENTRY_PROJECT_SLUG", "OPENFANG_SENTRY_PROJECT"])
+    base_url = resolve_sentry_value(args.base_url, sentry_cfg, "api_base_url", ["SENTRY_BASE_URL", "OPENFANG_SENTRY_BASE_URL"], "https://sentry.io")
 
     report: Dict[str, Any] = {
         "head_sha": args.head_sha,
         "checked_at": dt.datetime.now(tz=dt.timezone.utc).isoformat(),
-        "org": args.org,
-        "project": args.project,
+        "org": org,
+        "project": project,
         "query": args.query,
         "status": "missing",
         "ok": False,
@@ -65,6 +71,12 @@ def main() -> int:
         "issues": [],
         "errors": [],
     }
+
+    if not org or not project:
+        report["status"] = "missing"
+        report["errors"].append("missing Sentry org/project in args, env, or config")
+        _write_json(args.out, report)
+        return 2
 
     if not token:
         report["status"] = "missing"
@@ -74,9 +86,9 @@ def main() -> int:
 
     try:
         issues = _fetch_issues(
-            base_url=args.base_url,
-            org=args.org,
-            project=args.project,
+            base_url=base_url,
+            org=org,
+            project=project,
             token=token,
             query=args.query,
             limit=args.limit,

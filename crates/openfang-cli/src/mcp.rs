@@ -23,6 +23,39 @@ enum McpBackend {
 }
 
 impl McpBackend {
+    fn emit_structured_event(
+        &self,
+        event_kind: &str,
+        level: &str,
+        tool_name: &str,
+        agent_id: Option<&str>,
+        detail: Option<&str>,
+    ) {
+        let McpBackend::Daemon { base_url, client } = self else {
+            return;
+        };
+
+        let mut attributes = serde_json::Map::new();
+        attributes.insert("event.kind".to_string(), json!(event_kind));
+        attributes.insert("mcp.method".to_string(), json!("tools/call"));
+        attributes.insert("mcp.tool_name".to_string(), json!(tool_name));
+        if let Some(agent_id) = agent_id {
+            attributes.insert("openfang.agent_id".to_string(), json!(agent_id));
+        }
+        if let Some(detail) = detail {
+            attributes.insert("detail".to_string(), json!(detail));
+        }
+
+        let _ = client
+            .post(format!("{base_url}/api/telemetry/structured"))
+            .json(&json!({
+                "body": event_kind,
+                "level": level,
+                "attributes": Value::Object(attributes),
+            }))
+            .send();
+    }
+
     fn list_agents(&self) -> Vec<(String, String, String)> {
         // Returns (id, name, description) triples
         match self {
@@ -287,6 +320,13 @@ fn handle_message(backend: &McpBackend, msg: &Value) -> Option<Value> {
             let agent_id = match backend.resolve_tool_agent(tool_name) {
                 Some(id) => id,
                 None => {
+                    backend.emit_structured_event(
+                        "mcp.tool_call.failed",
+                        "warn",
+                        tool_name,
+                        None,
+                        Some("unknown_tool"),
+                    );
                     return Some(jsonrpc_error(
                         id?,
                         -32602,
@@ -295,26 +335,51 @@ fn handle_message(backend: &McpBackend, msg: &Value) -> Option<Value> {
                 }
             };
 
+            backend.emit_structured_event(
+                "mcp.tool_call.started",
+                "info",
+                tool_name,
+                Some(&agent_id),
+                None,
+            );
             match backend.send_message(&agent_id, &message) {
-                Ok(response) => Some(jsonrpc_response(
-                    id?,
-                    json!({
-                        "content": [{
-                            "type": "text",
-                            "text": response
-                        }]
-                    }),
-                )),
-                Err(e) => Some(jsonrpc_response(
-                    id?,
-                    json!({
-                        "content": [{
-                            "type": "text",
-                            "text": format!("Error: {e}")
-                        }],
-                        "isError": true
-                    }),
-                )),
+                Ok(response) => {
+                    backend.emit_structured_event(
+                        "mcp.tool_call.completed",
+                        "info",
+                        tool_name,
+                        Some(&agent_id),
+                        None,
+                    );
+                    Some(jsonrpc_response(
+                        id?,
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": response
+                            }]
+                        }),
+                    ))
+                }
+                Err(e) => {
+                    backend.emit_structured_event(
+                        "mcp.tool_call.failed",
+                        "warn",
+                        tool_name,
+                        Some(&agent_id),
+                        Some(&e),
+                    );
+                    Some(jsonrpc_response(
+                        id?,
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Error: {e}")
+                            }],
+                            "isError": true
+                        }),
+                    ))
+                }
             }
         }
 

@@ -77,6 +77,12 @@ cleanup_stale_locks
 
 printf 'root-lock: %s\n' "$(root_lock_state)"
 printf 'policy-root: %s\n' "$(policy_root)"
+printf 'canonical-remote: %s\n' "$(canonical_sync_remote 2>/dev/null || printf 'missing')"
+if has_credentialed_git_remotes; then
+  printf 'remote-hygiene: fail\n'
+else
+  printf 'remote-hygiene: ok\n'
+fi
 printf '\n'
 
 echo "tool    state      lock     branch                   place   path"
@@ -113,3 +119,14 @@ shopt -s nullglob
 for lock_file in "$(lock_root)"/*.env; do
   print_lock_row "$lock_file"
 done
+
+printf '\n'
+echo "credential-bearing remotes"
+echo "-------------------------"
+if has_credentialed_git_remotes; then
+  while IFS=$'\t' read -r name kind url; do
+    printf '%s (%s): %s\n' "$name" "$kind" "$url"
+  done < <(credentialed_git_remotes)
+else
+  echo "none"
+fi

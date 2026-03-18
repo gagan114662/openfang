@@ -62,22 +62,23 @@ def _run(args: Sequence[str], *, cwd: Optional[str] = None) -> subprocess.Comple
 
 
 def _repo_from_remote() -> str:
-    url = _run(["git", "config", "--get", "remote.origin.url"]).stdout.strip()
-    if not url:
-        raise RuntimeError("remote.origin.url is not configured")
+    for remote_name in ("myfork", "origin", "fork"):
+        url = _run(["git", "config", "--get", f"remote.{remote_name}.url"]).stdout.strip()
+        if not url:
+            continue
 
-    normalized = url
-    if normalized.endswith(".git"):
-        normalized = normalized[:-4]
+        normalized = url
+        if normalized.endswith(".git"):
+            normalized = normalized[:-4]
 
-    if normalized.startswith("git@github.com:"):
-        return normalized.split("git@github.com:", 1)[1]
+        if normalized.startswith("git@github.com:"):
+            return normalized.split("git@github.com:", 1)[1]
 
-    marker = "github.com/"
-    if marker in normalized:
-        return normalized.split(marker, 1)[1]
+        marker = "github.com/"
+        if marker in normalized:
+            return normalized.split(marker, 1)[1]
 
-    raise RuntimeError(f"could not parse GitHub repo from remote origin URL: {url}")
+    raise RuntimeError("could not parse GitHub repo from myfork/origin/fork remotes")
 
 
 def _gh_api_json(path: str) -> Any:

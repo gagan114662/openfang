@@ -18,7 +18,6 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 const TELEGRAM_OPERATOR_AGENT: &str = "mac-operator";
-const TELEGRAM_OPERATOR_GREETING: &str = "Ready. Tell me what to do on this Mac.";
 const TELEGRAM_OPERATOR_MISSING: &str =
     "Telegram desktop mode is blocked on this Mac: mac-operator is not running.";
 const TELEGRAM_SENTRY_PROMPT: &str = "Analyze the current Sentry issues page in this tab. Summarize the visible unresolved issues. If there are no unresolved issues, say exactly: No unresolved issues match the current Sentry filter.";
@@ -534,19 +533,6 @@ async fn dispatch_message(
         }
     };
 
-    let telegram_operator_route = if matches!(message.channel, crate::types::ChannelType::Telegram) {
-        match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
-            Ok(Some(agent_id)) => Some(agent_id),
-            Ok(None) => None,
-            Err(e) => {
-                error!("Failed resolving Telegram operator agent: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
     // Check if it's a slash command embedded in text (e.g. "/agents")
     if text.starts_with('/') {
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
@@ -595,31 +581,34 @@ async fn dispatch_message(
     }
 
     if matches!(message.channel, crate::types::ChannelType::Telegram) {
-        let normalized = text.trim().to_ascii_lowercase();
-        if telegram_operator_route.is_some()
-            && matches!(normalized.as_str(), "hi" | "hello" | "hey" | "yo" | "sup")
-        {
-            send_response(
-                adapter,
-                &message.sender,
-                TELEGRAM_OPERATOR_GREETING.to_string(),
-                thread_id,
-                output_format,
-            )
-            .await;
-            return;
-        }
         if telegram_wants_sentry_analysis(&text) {
-            if telegram_operator_route.is_none() {
-                send_response(
-                    adapter,
-                    &message.sender,
-                    TELEGRAM_OPERATOR_MISSING.to_string(),
-                    thread_id,
-                    output_format,
-                )
-                .await;
-                return;
+            match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    send_response(
+                        adapter,
+                        &message.sender,
+                        TELEGRAM_OPERATOR_MISSING.to_string(),
+                        thread_id,
+                        output_format,
+                    )
+                    .await;
+                    return;
+                }
+                Err(e) => {
+                    error!("Failed resolving Telegram operator agent: {e}");
+                    send_response(
+                        adapter,
+                        &message.sender,
+                        format!(
+                            "Telegram desktop mode is blocked on this Mac: failed to resolve mac-operator ({e})."
+                        ),
+                        thread_id,
+                        output_format,
+                    )
+                    .await;
+                    return;
+                }
             }
             let _ = adapter.send_typing(&message.sender).await;
             let response = match run_telegram_sentry_operator().await {
@@ -773,9 +762,7 @@ async fn dispatch_message(
     };
 
     // Priority 4: Use router resolution (default behavior)
-    let agent_id = if let Some(agent_id) = telegram_operator_route {
-        Some(agent_id)
-    } else if agent_id.is_none() {
+    let agent_id = if agent_id.is_none() {
         router.resolve(
             &message.channel,
             &message.sender.platform_id,
