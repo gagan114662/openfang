@@ -10,7 +10,7 @@ use openfang_types::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Configuration types
@@ -123,7 +123,7 @@ impl McpConnection {
     pub async fn connect(config: McpServerConfig) -> Result<Self, String> {
         let transport = match &config.transport {
             McpTransport::Stdio { command, args } => {
-                Self::connect_stdio(command, args, &config.env).await?
+                Self::connect_stdio(&config.name, command, args, &config.env).await?
             }
             McpTransport::Sse { url } => {
                 // SSRF check: reject private/localhost URLs unless explicitly configured
@@ -221,18 +221,26 @@ impl McpConnection {
     ) -> Result<String, String> {
         // Strip the namespace prefix to get the original tool name
         let raw_name = strip_mcp_prefix(&self.config.name, name).unwrap_or(name);
+        info!(server = %self.config.name, tool = %raw_name, "MCP tool call started");
 
         let params = serde_json::json!({
             "name": raw_name,
             "arguments": arguments,
         });
 
-        let response = self.send_request("tools/call", Some(params)).await?;
+        let response = match self.send_request("tools/call", Some(params)).await {
+            Ok(response) => response,
+            Err(error) => {
+                warn!(server = %self.config.name, tool = %raw_name, error = %error, "MCP tool call failed");
+                return Err(error);
+            }
+        };
 
         match response {
             Some(result) => {
                 // Extract text content from the response
-                if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+                let output = if let Some(content) = result.get("content").and_then(|c| c.as_array())
+                {
                     let texts: Vec<&str> = content
                         .iter()
                         .filter_map(|item| {
@@ -243,12 +251,22 @@ impl McpConnection {
                             }
                         })
                         .collect();
-                    Ok(texts.join("\n"))
+                    texts.join("\n")
                 } else {
-                    Ok(result.to_string())
-                }
+                    result.to_string()
+                };
+                info!(
+                    server = %self.config.name,
+                    tool = %raw_name,
+                    output_bytes = output.len(),
+                    "MCP tool call completed"
+                );
+                Ok(output)
             }
-            None => Err("No result from MCP tools/call".to_string()),
+            None => {
+                warn!(server = %self.config.name, tool = %raw_name, "MCP tool call returned no result");
+                Err("No result from MCP tools/call".to_string())
+            }
         }
     }
 
@@ -384,6 +402,7 @@ impl McpConnection {
     }
 
     async fn connect_stdio(
+        server_name: &str,
         command: &str,
         args: &[String],
         env_whitelist: &[String],
@@ -411,6 +430,13 @@ impl McpConnection {
             cmd.env("PATH", path);
         }
 
+        info!(
+            server = server_name,
+            command = command,
+            args = ?args,
+            "Spawning MCP stdio server"
+        );
+
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn MCP server '{command}': {e}"))?;
@@ -423,6 +449,30 @@ impl McpConnection {
             .stdout
             .take()
             .ok_or("Failed to capture MCP server stdout")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Failed to capture MCP server stderr")?;
+
+        let stderr_server_name = server_name.to_string();
+        tokio::spawn(async move {
+            let mut stderr = BufReader::new(stderr).lines();
+            loop {
+                match stderr.next_line().await {
+                    Ok(Some(line)) => {
+                        let line = line.trim();
+                        if !line.is_empty() {
+                            warn!(server = %stderr_server_name, output = %line, "MCP stderr");
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        warn!(server = %stderr_server_name, error = %error, "MCP stderr reader failed");
+                        break;
+                    }
+                }
+            }
+        });
 
         Ok(McpTransportHandle::Stdio {
             child: Box::new(child),
