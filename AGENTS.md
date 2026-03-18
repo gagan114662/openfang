@@ -153,12 +153,14 @@ bash scripts/worktree/root_mode.sh lock
 ```
 Rules:
 - Root checkout is inspection/integration only and is read-only by default.
+- Launch is blocked if the root checkout has disallowed uncommitted changes. Only local metadata/log paths such as `.claude/**`, `.codex/**`, `.entire/**`, `artifacts/**`, `log/**`, `*.log`, and `.DS_Store` are ignored by default.
 - Active Claude work belongs on `claude/<task>` branches.
 - Active Codex work belongs on `codex/<task>` branches.
 - Never run Claude and Codex against the same worktree at the same time.
 - Raw `claude` and `codex` inside any OpenFang checkout or linked worktree prompt for a task name, then auto-route into the matching managed worktree.
 - The repo's Claude hook rejects sessions that were not launched through the guarded worktree path.
 - Locks live outside the repo and prevent concurrent Claude/Codex sessions in the same worktree.
+- Root lock auto-syncs the clean canonical branch to the configured remote before making the checkout read-only. Override the target with `OPENFANG_CANONICAL_PUSH_REMOTE` and `OPENFANG_CANONICAL_PUSH_BRANCH`. Extend the ignored-root list with `OPENFANG_ROOT_DIRTY_ALLOWLIST` using `:`-separated shell globs.
 
 ## Common Gotchas
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first

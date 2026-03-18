@@ -200,7 +200,7 @@ sync_canonical_root_branch() {
     return 0
   fi
 
-  if ! worktree_is_clean "$repo"; then
+  if root_has_disallowed_dirt; then
     return 0
   fi
 

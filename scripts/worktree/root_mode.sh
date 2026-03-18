@@ -65,6 +65,12 @@ lock_root_checkout() {
     return 0
   fi
 
+  if root_has_disallowed_dirt; then
+    echo "OpenFang policy: cannot lock the root checkout with disallowed uncommitted changes." >&2
+    root_disallowed_dirty_files | sed 's/^/ - /' >&2
+    return 1
+  fi
+
   sync_canonical_root_branch
 
   rm -f "$manifest"
