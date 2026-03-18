@@ -2,7 +2,7 @@
 tracker:
   kind: linear
   api_key: $LINEAR_API_KEY
-  project_slug: "auto-c7d689304042"
+  project_slug: "c7d689304042"
   assignee: $LINEAR_ASSIGNEE
   active_states:
     - Todo
