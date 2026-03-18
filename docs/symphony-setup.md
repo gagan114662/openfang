@@ -22,6 +22,8 @@ This repo now contains a repo-local Symphony workflow contract at `WORKFLOW.md`.
 ./scripts/symphony/run_local.sh
 ```
 
+The wrapper includes Symphony's required preview acknowledgment flag automatically.
+
 Optional overrides:
 
 - `SYMPHONY_ELIXIR_ROOT`

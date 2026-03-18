@@ -7,6 +7,7 @@ SYMPHONY_ELIXIR_ROOT="${SYMPHONY_ELIXIR_ROOT:-/Users/gaganarora/Desktop/my proje
 WORKFLOW_PATH="${OPENFANG_SYMPHONY_WORKFLOW_PATH:-$REPO_ROOT/WORKFLOW.md}"
 LOGS_ROOT="${SYMPHONY_LOGS_ROOT:-$REPO_ROOT/artifacts/symphony/log}"
 PORT="${SYMPHONY_PORT:-4100}"
+ACK_FLAG="--i-understand-that-this-will-be-running-without-the-usual-guardrails"
 
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -44,7 +45,7 @@ if command -v mise >/dev/null 2>&1; then
   else
     mise exec -- mix build
   fi
-  exec mise exec -- ./bin/symphony "$WORKFLOW_PATH" --logs-root "$LOGS_ROOT" --port "$PORT"
+  exec mise exec -- ./bin/symphony "$ACK_FLAG" "$WORKFLOW_PATH" --logs-root "$LOGS_ROOT" --port "$PORT"
 fi
 
 if [[ ! -x ./bin/symphony ]]; then
@@ -52,4 +53,4 @@ if [[ ! -x ./bin/symphony ]]; then
   exit 1
 fi
 
-exec ./bin/symphony "$WORKFLOW_PATH" --logs-root "$LOGS_ROOT" --port "$PORT"
+exec ./bin/symphony "$ACK_FLAG" "$WORKFLOW_PATH" --logs-root "$LOGS_ROOT" --port "$PORT"
