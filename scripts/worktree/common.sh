@@ -114,6 +114,117 @@ worktree_is_clean() {
   [[ "$(worktree_dirty_count "$1")" == "0" ]]
 }
 
+canonical_sync_remote() {
+  local repo remote
+  repo="$(repo_root)"
+
+  if [[ -n "${OPENFANG_CANONICAL_PUSH_REMOTE:-}" ]]; then
+    printf '%s\n' "$OPENFANG_CANONICAL_PUSH_REMOTE"
+    return 0
+  fi
+
+  for remote in myfork fork origin; do
+    if git -C "$repo" remote get-url "$remote" >/dev/null 2>&1; then
+      printf '%s\n' "$remote"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+canonical_sync_branch() {
+  printf '%s\n' "${OPENFANG_CANONICAL_PUSH_BRANCH:-main}"
+}
+
+root_dirty_allowlist_patterns() {
+  local patterns="${OPENFANG_ROOT_DIRTY_ALLOWLIST:-}"
+  if [[ -n "$patterns" ]]; then
+    printf '%s\n' "$patterns" | tr ':' '\n'
+    return 0
+  fi
+
+  cat <<'EOF'
+.claude/**
+.codex/**
+.entire/**
+artifacts/**
+log/**
+*.log
+.DS_Store
+EOF
+}
+
+root_dirty_files() {
+  git -C "$(repo_root)" status --porcelain=v1 --untracked-files=all \
+    | sed -E 's/^[ MARCUD?!]{2} //'
+}
+
+root_dirty_path_allowed() {
+  local path="$1"
+  local pattern
+  while IFS= read -r pattern; do
+    [[ -n "$pattern" ]] || continue
+    if [[ "$path" == $pattern ]]; then
+      return 0
+    fi
+  done < <(root_dirty_allowlist_patterns)
+  return 1
+}
+
+root_disallowed_dirty_files() {
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if ! root_dirty_path_allowed "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(root_dirty_files)
+}
+
+root_has_disallowed_dirt() {
+  local path
+  while IFS= read -r path; do
+    [[ -z "$path" ]] || return 0
+  done < <(root_disallowed_dirty_files)
+  return 1
+}
+
+sync_canonical_root_branch() {
+  local repo remote branch current_branch_name local_head remote_head
+  repo="$(repo_root)"
+  branch="$(canonical_sync_branch)"
+  current_branch_name="$(current_branch "$repo")"
+
+  if [[ "$current_branch_name" != "$branch" ]]; then
+    return 0
+  fi
+
+  if ! worktree_is_clean "$repo"; then
+    return 0
+  fi
+
+  remote="$(canonical_sync_remote)" || return 0
+  local_head="$(current_head "$repo")"
+
+  if ! remote_head="$(git -C "$repo" rev-parse "$remote/$branch" 2>/dev/null)"; then
+    git -C "$repo" push "$remote" "$branch:$branch" >/dev/null
+    return 0
+  fi
+
+  if [[ "$local_head" == "$remote_head" ]]; then
+    return 0
+  fi
+
+  if git -C "$repo" merge-base --is-ancestor "$remote_head" "$local_head"; then
+    git -C "$repo" push "$remote" "$branch:$branch" >/dev/null
+    return 0
+  fi
+
+  echo "OpenFang policy: canonical branch '$branch' diverged from '$remote'. Pull/rebase before locking root checkout." >&2
+  return 1
+}
+
 lock_file_path() {
   printf '%s/%s--%s.env\n' "$(lock_root)" "$1" "$2"
 }

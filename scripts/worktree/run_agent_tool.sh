@@ -55,6 +55,12 @@ if [[ -z "$TOOL_BIN" ]]; then
   exit 1
 fi
 
+if root_has_disallowed_dirt; then
+  echo "OpenFang policy: root checkout has disallowed uncommitted changes. Commit, stash, or move them before launching $TOOL/$TASK_SLUG." >&2
+  root_disallowed_dirty_files | sed 's/^/ - /' >&2
+  exit 1
+fi
+
 relock_root() {
   OPENFANG_POLICY_REPO_ROOT="$REPO_ROOT" bash "$REPO_ROOT/scripts/worktree/root_mode.sh" lock >/dev/null
 }

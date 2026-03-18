@@ -65,6 +65,8 @@ lock_root_checkout() {
     return 0
   fi
 
+  sync_canonical_root_branch
+
   rm -f "$manifest"
   touch "$manifest"
 
