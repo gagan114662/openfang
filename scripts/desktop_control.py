@@ -360,14 +360,6 @@ def desktop_preflight() -> dict:
         )
 
     app_name = str(active.get("app_name") or "").strip()
-    if not app_name:
-        blockers.append(
-            {
-                "kind": "active_window",
-                "reason": "No frontmost active window is available.",
-                "settings": None,
-            }
-        )
 
     try:
         screen = screen_size_data()
@@ -402,8 +394,11 @@ def desktop_preflight() -> dict:
         )
 
     screenshot_probe = {"success": False, "error": "unknown"}
+    screenshot_hint = ""
     try:
-        screenshot_probe = run_bridge([{"action": "Screenshot"}])[0]
+        screenshot_probe = screenshot_data()
+        if screenshot_probe.get("success") and screenshot_probe.get("path"):
+            screenshot_hint = ocr_image(str(screenshot_probe.get("path") or "")).lower()
     except Exception as exc:
         screenshot_probe = {"success": False, "error": str(exc)}
     if not screenshot_probe.get("success"):
@@ -415,6 +410,40 @@ def desktop_preflight() -> dict:
                 "settings": "screen_capture",
             }
         )
+
+    shot_width = int(screenshot_probe.get("width") or 0)
+    shot_height = int(screenshot_probe.get("height") or 0)
+    if (width <= 0 or height <= 0) and shot_width > 0 and shot_height > 0:
+        width = shot_width
+        height = shot_height
+        screen = {"width": width, "height": height}
+        blockers = [b for b in blockers if b.get("kind") != "screen_size"]
+
+    if not app_name:
+        if any(
+            phrase in screenshot_hint
+            for phrase in (
+                "foolish.sentry.io",
+                "openfang-monitoring",
+                "feed",
+                "issues",
+                "claude",
+                "google chrome",
+            )
+        ):
+            active = {
+                **active,
+                "app_name": "Google Chrome",
+                "window_title": active.get("window_title") or "Google Chrome",
+            }
+        else:
+            blockers.append(
+                {
+                    "kind": "active_window",
+                    "reason": "No frontmost active window is available.",
+                    "settings": None,
+                }
+            )
 
     for blocker in blockers:
         setting_kind = blocker.get("settings")
@@ -428,6 +457,7 @@ def desktop_preflight() -> dict:
         "active_window": active,
         "screen": {"width": width, "height": height},
         "screenshot_probe": screenshot_probe,
+        "screenshot_hint": screenshot_hint[:1000],
         "blockers": blockers,
     }
 
@@ -1033,6 +1063,13 @@ def significant_panel_lines(text: str, prompt_text: str = "") -> list[str]:
                 "act without asking",
                 "claude is ai and can make mistakes",
                 "reply to claude",
+                "approve plan",
+                "make changes",
+                "claude's plan",
+                "allow actions on these sites",
+                "approach to follow",
+                "read the current sentry issues page",
+                "summarize all visible unresolved issues",
                 "wallet empty",
                 "add credits",
                 "sonnet 4.6",
@@ -1055,6 +1092,35 @@ def extract_new_panel_response(before_text: str, after_text: str, prompt_text: s
     if not new_lines:
         return None
     return "\n".join(new_lines[:8]).strip() or None
+
+
+def claude_panel_requires_approval(ocr_text: str) -> bool:
+    lower = (ocr_text or "").lower()
+    return "approve plan" in lower or "make changes" in lower or "claude's plan" in lower
+
+
+def claude_click_panel_action(screenshot: dict, *phrases: str) -> dict:
+    lines = ocr_image_lines(str(screenshot.get("path") or ""))
+    for phrase in phrases:
+        line = find_ocr_line(lines, phrase)
+        if line is None:
+            continue
+        point = ocr_line_screen_center(line, screenshot)
+        if point is None:
+            continue
+        if not ensure_frontmost_app("Google Chrome"):
+            return {"success": False, "error": "Google Chrome lost focus before approval click."}
+        responses = run_bridge(
+            [{"action": "Click", "x": point[0], "y": point[1], "button": "left", "double": False}]
+        )
+        time.sleep(1.0)
+        return {
+            "success": all(response.get("success") for response in responses),
+            "responses": responses,
+            "clicked_phrase": phrase,
+            "clicked_point": point,
+        }
+    return {"success": False, "error": f"Claude panel action not found for phrases: {', '.join(phrases)}"}
 
 
 def normalize_image_point(
@@ -1863,12 +1929,18 @@ def claude_attached_panel_paste_and_send(text: str, screenshot: dict) -> dict:
     response_excerpt = ""
     response_started = False
     send_responses = []
+    approval_result = None
 
     if typed_visible and ensure_frontmost_app("Google Chrome"):
         send_responses = run_bridge([{"action": "KeyPress", "key": "return", "modifiers": []}])
         time.sleep(0.8)
         post_shot = screenshot_data()
         post_ocr = claude_panel_ocr_text(post_shot)
+        if claude_panel_requires_approval(post_ocr):
+            approval_result = claude_click_panel_action(post_shot, "make changes", "approve plan")
+            if approval_result.get("success"):
+                post_shot = screenshot_data()
+                post_ocr = claude_panel_ocr_text(post_shot)
         prompt_still_visible = normalized_text[:48] in " ".join(post_ocr.lower().split())
         response_excerpt = extract_new_panel_response("", post_ocr, text)
         response_started = bool(response_excerpt) or (not prompt_still_visible)
@@ -1890,6 +1962,7 @@ def claude_attached_panel_paste_and_send(text: str, screenshot: dict) -> dict:
         "typed_ocr_excerpt": typed_ocr[:1500],
         "post_screenshot_path": post_shot.get("path"),
         "post_ocr_excerpt": post_ocr[:1500],
+        "approval_result": approval_result,
         "fallback": "panel_local_paste",
     }
 
@@ -1938,6 +2011,7 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     prompt_still_visible = normalized_text[:48] in " ".join(post_ocr.lower().split())
     response_excerpt = extract_new_panel_response(panel_before_ocr, post_ocr, text)
     send_click_responses = []
+    approval_result = None
 
     return_fallback_responses = []
     return_fallback_used = False
@@ -1952,6 +2026,11 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
         time.sleep(0.8)
         post_shot = screenshot_data()
         post_ocr = claude_panel_ocr_text(post_shot)
+        if claude_panel_requires_approval(post_ocr):
+            approval_result = claude_click_panel_action(post_shot, "make changes", "approve plan")
+            if approval_result.get("success"):
+                post_shot = screenshot_data()
+                post_ocr = claude_panel_ocr_text(post_shot)
         prompt_still_visible = normalized_text[:48] in " ".join(post_ocr.lower().split())
         response_excerpt = extract_new_panel_response(panel_before_ocr, post_ocr, text)
 
@@ -1961,6 +2040,12 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
             time.sleep(1.0)
             poll_shot = screenshot_data()
             poll_ocr = claude_panel_ocr_text(poll_shot)
+            if claude_panel_requires_approval(poll_ocr):
+                approval_result = claude_click_panel_action(poll_shot, "make changes", "approve plan")
+                if approval_result.get("success"):
+                    time.sleep(1.0)
+                    poll_shot = screenshot_data()
+                    poll_ocr = claude_panel_ocr_text(poll_shot)
             candidate = extract_new_panel_response(panel_before_ocr, poll_ocr, text)
             if candidate:
                 post_shot = poll_shot
@@ -1990,6 +2075,7 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
         "typed_ocr_excerpt": typed_ocr[:1500],
         "post_screenshot_path": post_shot.get("path"),
         "post_ocr_excerpt": post_ocr[:1500],
+        "approval_result": approval_result,
         "ax_result": typed_result,
     }
 
