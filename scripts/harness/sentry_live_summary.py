@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--environment", help="Sentry environment filter (overrides config)")
     parser.add_argument("--stats-period", default="24h", help="Sentry stats period, e.g. 24h or 7d")
     parser.add_argument("--limit", type=int, default=10, help="Maximum rows to return in top lists")
+    parser.add_argument(
+        "--feed-limit",
+        type=int,
+        default=25,
+        help="Issue rows to mirror from the first Sentry issue-feed page",
+    )
     parser.add_argument("--format", choices=("json", "text"), default="json", help="Output format")
     parser.add_argument("--out", help="Optional output file path")
     return parser.parse_args()
@@ -183,6 +189,8 @@ def render_text(summary: Dict[str, Any]) -> str:
         f"- environment: {summary.get('environment') or 'all'}",
         f"- window_utc: {summary['window']['start']} -> {summary['window']['end']}",
         f"- errors: {summary['errors']['count_24h']}",
+        f"- visible groups on feed page: {summary['issues']['visible_groups_feed_page']}",
+        f"- visible unresolved groups on feed page: {summary['issues']['visible_unresolved_groups_feed_page']}",
         f"- groups seen in window: {summary['issues']['groups_seen_24h']}",
         f"- unresolved groups seen in window: {summary['issues']['unresolved_groups_seen_24h']}",
         f"- issue events seen in window: {summary['issues']['events_seen_24h']}",
@@ -242,6 +250,24 @@ def main() -> int:
     project_id = str(project_info.get("id") or "")
     if not project_id:
         raise SystemExit("Failed to resolve Sentry project id")
+
+    feed_page_raw = sentry_get_json(
+        base_url,
+        f"/api/0/projects/{org}/{project}/issues/",
+        token,
+        {
+            "statsPeriod": args.stats_period,
+            "limit": args.feed_limit,
+            "query": build_query(environment=environment),
+        },
+    )
+    feed_page_issues = feed_page_raw if isinstance(feed_page_raw, list) else []
+    feed_page_seen = [
+        summarize_issue(issue, args.stats_period)
+        for issue in feed_page_issues
+        if issue_window_count(issue, args.stats_period) > 0
+    ]
+    feed_page_unresolved = [issue for issue in feed_page_seen if issue["status"] == "unresolved"]
 
     issues_all = sentry_get_all_pages(
         base_url,
@@ -333,6 +359,9 @@ def main() -> int:
             "count_24h": error_count,
         },
         "issues": {
+            "feed_page_limit": args.feed_limit,
+            "visible_groups_feed_page": len(feed_page_seen),
+            "visible_unresolved_groups_feed_page": len(feed_page_unresolved),
             "groups_seen_24h": len(issues_seen),
             "unresolved_groups_seen_24h": len(unresolved_seen),
             "events_seen_24h": issue_events_seen,

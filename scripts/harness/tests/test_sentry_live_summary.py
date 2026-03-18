@@ -60,3 +60,33 @@ def test_stats_period_window_uses_exact_utc_range() -> None:
     start, end = MODULE.stats_period_window("24h", now=now)
     assert start == dt.datetime(2026, 3, 17, 14, 30, tzinfo=dt.timezone.utc)
     assert end == now
+
+
+def test_render_text_includes_feed_page_counts() -> None:
+    summary = {
+        "stats_period": "24h",
+        "org": "foolish",
+        "project": "openfang-monitoring",
+        "environment": "production",
+        "window": {
+            "start": "2026-03-17T14:30:00+00:00",
+            "end": "2026-03-18T14:30:00+00:00",
+        },
+        "errors": {"count_24h": 1},
+        "issues": {
+            "visible_groups_feed_page": 25,
+            "visible_unresolved_groups_feed_page": 25,
+            "groups_seen_24h": 29,
+            "unresolved_groups_seen_24h": 29,
+            "events_seen_24h": 901,
+            "top_groups": [],
+        },
+        "transactions": {
+            "count_24h": 582,
+            "p95_ms": 48928.3,
+            "top_transactions": [],
+        },
+    }
+    rendered = MODULE.render_text(summary)
+    assert "- visible groups on feed page: 25" in rendered
+    assert "- visible unresolved groups on feed page: 25" in rendered
