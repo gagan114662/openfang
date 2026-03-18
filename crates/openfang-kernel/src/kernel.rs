@@ -539,6 +539,9 @@ impl OpenFangKernel {
         // Clamp configuration bounds to prevent zero-value or unbounded misconfigs
         config.clamp_bounds();
 
+        // Initialize Sentry as early as possible so boot-time logs/spans are captured.
+        let sentry_guard = Self::initialize_sentry(&config);
+
         match config.mode {
             KernelMode::Stable => {
                 info!("Booting OpenFang kernel in STABLE mode — conservative defaults enforced");
@@ -556,9 +559,6 @@ impl OpenFangKernel {
         for w in &warnings {
             warn!("Config: {}", w);
         }
-
-        // Initialize Sentry AI Monitoring (must happen early to capture all events)
-        let sentry_guard = Self::initialize_sentry(&config);
 
         // Configure Bun-backed RLM runtime and fail fast if Bun is required but missing.
         openfang_runtime::rlm::configure(config.rlm.clone());
@@ -2538,10 +2538,7 @@ impl OpenFangKernel {
     }
 
     /// Get the current rolling hourly token quota status for an agent.
-    pub fn agent_quota_status(
-        &self,
-        agent_id: AgentId,
-    ) -> Option<crate::scheduler::QuotaStatus> {
+    pub fn agent_quota_status(&self, agent_id: AgentId) -> Option<crate::scheduler::QuotaStatus> {
         self.scheduler.quota_status(agent_id)
     }
 
@@ -3629,6 +3626,11 @@ impl OpenFangKernel {
             "OpenFang kernel shut down ({} agents preserved)",
             self.registry.list().len()
         );
+
+        // Give the active Sentry client a brief window to flush queued events before exit.
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_secs(2)));
+        }
     }
 
     /// Resolve the LLM driver for an agent.

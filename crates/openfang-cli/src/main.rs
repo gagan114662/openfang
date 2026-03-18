@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
 use std::sync::atomic::Ordering;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Global flag set by the Ctrl+C handler.
 static CTRLC_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -705,11 +706,19 @@ enum SystemCommands {
 }
 
 fn init_tracing_stderr() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let sentry_layer = sentry_tracing::layer()
+        .enable_span_attributes()
+        .event_filter(|metadata| match metadata.level() {
+            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+            _ => sentry_tracing::EventFilter::Event,
+        });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry_layer)
         .init();
 }
 
@@ -723,20 +732,38 @@ fn init_tracing_file() {
 
     match std::fs::File::create(&log_path) {
         Ok(file) => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            let sentry_layer = sentry_tracing::layer()
+                .enable_span_attributes()
+                .event_filter(|metadata| match metadata.level() {
+                    &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                    _ => sentry_tracing::EventFilter::Event,
+                });
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(std::sync::Mutex::new(file))
+                        .with_ansi(false),
                 )
-                .with_writer(std::sync::Mutex::new(file))
-                .with_ansi(false)
+                .with(sentry_layer)
                 .init();
         }
         Err(_) => {
             // Fallback: suppress all output rather than corrupt the TUI
-            tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::ERROR)
-                .with_writer(std::io::sink)
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::filter::LevelFilter::ERROR)
+                .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
+                .with(
+                    sentry_tracing::layer()
+                        .enable_span_attributes()
+                        .event_filter(|metadata| match metadata.level() {
+                            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                            _ => sentry_tracing::EventFilter::Event,
+                        }),
+                )
                 .init();
         }
     }

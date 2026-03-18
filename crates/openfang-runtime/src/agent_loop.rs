@@ -91,6 +91,23 @@ pub struct AgentLoopResult {
     pub directives: openfang_types::message::ReplyDirectives,
 }
 
+struct TransactionFinisher {
+    transaction: sentry::TransactionOrSpan,
+}
+
+impl TransactionFinisher {
+    fn new(transaction: sentry::TransactionOrSpan) -> Self {
+        Self { transaction }
+    }
+}
+
+impl Drop for TransactionFinisher {
+    fn drop(&mut self) {
+        self.transaction.clone().finish();
+        sentry::configure_scope(|scope| scope.set_span(None));
+    }
+}
+
 /// Run the agent execution loop for a single user message.
 ///
 /// This is the core of OpenFang: it loads session context, recalls memories,
@@ -125,6 +142,7 @@ pub async fn run_agent_loop(
         "agent.loop",
         "ai-inference",
     ));
+    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
     sentry::configure_scope(|scope| {
         scope.set_span(Some(transaction.clone().into()));
     });
@@ -380,6 +398,7 @@ pub async fn run_agent_loop(
                     memory
                         .save_session(session)
                         .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+                    transaction.set_status(sentry::protocol::SpanStatus::Ok);
                     return Ok(AgentLoopResult {
                         response: String::new(),
                         total_usage,
@@ -517,6 +536,7 @@ pub async fn run_agent_loop(
                     let _ = hook_reg.fire(&ctx);
                 }
 
+                transaction.set_status(sentry::protocol::SpanStatus::Ok);
                 return Ok(AgentLoopResult {
                     response: final_response,
                     total_usage,
@@ -573,6 +593,7 @@ pub async fn run_agent_loop(
                                 };
                                 let _ = hook_reg.fire(&ctx);
                             }
+                            transaction.set_status(sentry::protocol::SpanStatus::InternalError);
                             return Err(OpenFangError::Internal(msg.clone()));
                         }
                         LoopGuardVerdict::Block(msg) => {
@@ -752,6 +773,7 @@ pub async fn run_agent_loop(
                         };
                         let _ = hook_reg.fire(&ctx);
                     }
+                    transaction.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
                     return Ok(AgentLoopResult {
                         response: text,
                         total_usage,
@@ -791,6 +813,7 @@ pub async fn run_agent_loop(
         let _ = hook_reg.fire(&ctx);
     }
 
+    transaction.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
     Err(OpenFangError::MaxIterationsExceeded(max_iterations))
 }
 

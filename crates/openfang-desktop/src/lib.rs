@@ -17,6 +17,7 @@ use std::time::Instant;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_notification::NotificationExt;
 use tracing::{info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Managed state: the port the embedded server listens on.
 pub struct PortState(pub u16);
@@ -31,11 +32,19 @@ pub struct KernelState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Init tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "openfang=info,tauri=info".into()),
-        )
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "openfang=info,tauri=info".into());
+    let sentry_layer = sentry_tracing::layer()
+        .enable_span_attributes()
+        .event_filter(|metadata| match metadata.level() {
+            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+            _ => sentry_tracing::EventFilter::Event,
+        });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry_layer)
         .init();
 
     info!("Starting OpenFang Desktop...");
