@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import datetime as dt
 from pathlib import Path
 
 
@@ -42,3 +43,20 @@ def test_summarize_issue_uses_window_count() -> None:
     assert summary["count_total"] == 574
     assert summary["count_window"] == 10
     assert summary["short_id"] == "OPENFANG-1"
+
+
+def test_parse_next_cursor_reads_sentry_link_header() -> None:
+    header = (
+        '<https://sentry.io/api/0/projects/foolish/openfang-monitoring/issues/'
+        '?cursor=0%3A100%3A1>; rel="previous"; results="false"; cursor="0:100:1", '
+        '<https://sentry.io/api/0/projects/foolish/openfang-monitoring/issues/'
+        '?cursor=0%3A200%3A0>; rel="next"; results="true"; cursor="0:200:0"'
+    )
+    assert MODULE.parse_next_cursor(header) == "0:200:0"
+
+
+def test_stats_period_window_uses_exact_utc_range() -> None:
+    now = dt.datetime(2026, 3, 18, 14, 30, tzinfo=dt.timezone.utc)
+    start, end = MODULE.stats_period_window("24h", now=now)
+    assert start == dt.datetime(2026, 3, 17, 14, 30, tzinfo=dt.timezone.utc)
+    assert end == now

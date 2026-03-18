@@ -10,9 +10,10 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use openfang_types::agent::AgentId;
+use std::path::PathBuf;
 use openfang_types::config::{ChannelOverrides, DmPolicy, GroupPolicy, OutputFormat};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
@@ -20,6 +21,77 @@ const TELEGRAM_OPERATOR_AGENT: &str = "mac-operator";
 const TELEGRAM_OPERATOR_GREETING: &str = "Ready. Tell me what to do on this Mac.";
 const TELEGRAM_OPERATOR_MISSING: &str =
     "Telegram desktop mode is blocked on this Mac: mac-operator is not running.";
+const TELEGRAM_SENTRY_PROMPT: &str = "Analyze the current Sentry issues page in this tab. Summarize the visible unresolved issues. If there are no unresolved issues, say exactly: No unresolved issues match the current Sentry filter.";
+
+fn telegram_wants_sentry_analysis(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase();
+    normalized.contains("sentry")
+        || normalized.contains("recent errors")
+        || normalized.contains("claude extension")
+}
+
+fn desktop_control_script_path() -> PathBuf {
+    if let Ok(root) = std::env::var("OPENFANG_POLICY_REPO_ROOT") {
+        let candidate = PathBuf::from(root).join("scripts").join("desktop_control.py");
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    PathBuf::from("scripts/desktop_control.py")
+}
+
+async fn run_telegram_sentry_operator() -> Result<String, String> {
+    let output = tokio::time::timeout(
+        Duration::from_secs(45),
+        tokio::process::Command::new("python3")
+            .arg(desktop_control_script_path())
+            .arg("claude-prompt")
+            .arg(TELEGRAM_SENTRY_PROMPT)
+            .output(),
+    )
+    .await
+    .map_err(|_| "operator timed out waiting for the Claude extension.".to_string())?
+    .map_err(|e| format!("failed launching desktop helper: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let payload: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("desktop helper returned invalid JSON: {e}"))?;
+
+    if payload
+        .get("success")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        if let Some(excerpt) = payload
+            .get("data")
+            .and_then(|value| value.get("claude_response_excerpt"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(excerpt.to_string());
+        }
+        return Ok("Opened Sentry in Chrome and submitted the analysis prompt to Claude.".to_string());
+    }
+
+    let phase = payload
+        .get("failure_phase")
+        .and_then(|value| value.as_str())
+        .unwrap_or("operator");
+    let reason = payload
+        .get("failure_reason")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if stderr.is_empty() {
+                "desktop helper failed"
+            } else {
+                stderr.as_str()
+            }
+        });
+    Err(format!("Operator blocked at {phase}: {reason}"))
+}
 
 /// Kernel operations needed by channel adapters.
 ///
@@ -549,6 +621,22 @@ async fn dispatch_message(
                 adapter,
                 &message.sender,
                 TELEGRAM_OPERATOR_GREETING.to_string(),
+                thread_id,
+                output_format,
+            )
+            .await;
+            return;
+        }
+        if telegram_wants_sentry_analysis(&text) {
+            let _ = adapter.send_typing(&message.sender).await;
+            let response = match run_telegram_sentry_operator().await {
+                Ok(response) => response,
+                Err(error) => error,
+            };
+            send_response(
+                adapter,
+                &message.sender,
+                response,
                 thread_id,
                 output_format,
             )

@@ -7,10 +7,11 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 try:
     import tomllib
@@ -49,7 +50,9 @@ def resolve_token(sentry_cfg: Dict[str, Any]) -> str:
     return str(sentry_cfg.get("auth_token") or "").strip()
 
 
-def sentry_get_json(base_url: str, path: str, token: str, params: Dict[str, Any]) -> Any:
+def sentry_get_json_with_headers(
+    base_url: str, path: str, token: str, params: Dict[str, Any]
+) -> Tuple[Any, Mapping[str, str]]:
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
     url = f"{base_url.rstrip('/')}{path}"
     if query:
@@ -63,7 +66,46 @@ def sentry_get_json(base_url: str, path: str, token: str, params: Dict[str, Any]
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8")), dict(response.headers.items())
+
+
+def sentry_get_json(base_url: str, path: str, token: str, params: Dict[str, Any]) -> Any:
+    payload, _headers = sentry_get_json_with_headers(base_url, path, token, params)
+    return payload
+
+
+def parse_next_cursor(link_header: str) -> Optional[str]:
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        if 'rel="next"' not in part or 'results="true"' not in part:
+            continue
+        match = re.search(r'[?&]cursor=([^&>]+)', part)
+        if match:
+            return urllib.parse.unquote(match.group(1))
+    return None
+
+
+def sentry_get_all_pages(
+    base_url: str,
+    path: str,
+    token: str,
+    params: Dict[str, Any],
+    *,
+    page_limit: int = 20,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    page_params = dict(params)
+    for _ in range(page_limit):
+        payload, headers = sentry_get_json_with_headers(base_url, path, token, page_params)
+        if not isinstance(payload, list):
+            break
+        rows.extend(item for item in payload if isinstance(item, dict))
+        next_cursor = parse_next_cursor(headers.get("Link", ""))
+        if not next_cursor:
+            break
+        page_params["cursor"] = next_cursor
+    return rows
 
 
 def issue_window_count(issue: Dict[str, Any], stats_period: str) -> int:
@@ -116,14 +158,34 @@ def sort_top(rows: Iterable[Dict[str, Any]], key: str, limit: int) -> List[Dict[
     return sorted(rows, key=lambda row: row.get(key, 0), reverse=True)[:limit]
 
 
+def stats_period_window(
+    stats_period: str, *, now: Optional[dt.datetime] = None
+) -> Tuple[dt.datetime, dt.datetime]:
+    match = re.fullmatch(r"(\d+)([hdw])", stats_period.strip().lower())
+    if not match:
+        raise ValueError(f"Unsupported stats period: {stats_period}")
+    amount = int(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        "h": dt.timedelta(hours=amount),
+        "d": dt.timedelta(days=amount),
+        "w": dt.timedelta(weeks=amount),
+    }
+    end = (now or dt.datetime.now(tz=dt.timezone.utc)).astimezone(dt.timezone.utc)
+    start = end - multipliers[unit]
+    return start, end
+
+
 def render_text(summary: Dict[str, Any]) -> str:
     lines = [
         f"Sentry summary ({summary['stats_period']})",
         f"- org/project: {summary['org']} / {summary['project']}",
         f"- environment: {summary.get('environment') or 'all'}",
+        f"- window_utc: {summary['window']['start']} -> {summary['window']['end']}",
         f"- errors: {summary['errors']['count_24h']}",
         f"- groups seen in window: {summary['issues']['groups_seen_24h']}",
         f"- unresolved groups seen in window: {summary['issues']['unresolved_groups_seen_24h']}",
+        f"- issue events seen in window: {summary['issues']['events_seen_24h']}",
     ]
 
     tx = summary["transactions"]
@@ -136,10 +198,10 @@ def render_text(summary: Dict[str, Any]) -> str:
             else f"- transactions: {tx['count_24h']}"
         )
 
-    lines.append("- top issue groups by window count:")
+    lines.append("- top issue groups by issue-event count:")
     for row in summary["issues"]["top_groups"]:
         lines.append(
-            f"  - {row['count_window']} — {row['title']} "
+            f"  - {row['events_seen_24h']} — {row['title']} "
             f"[{row['status']}/{row['level']}] ({row['short_id']})"
         )
 
@@ -169,6 +231,8 @@ def main() -> int:
     if not org or not project:
         raise SystemExit("Missing Sentry org/project configuration")
 
+    window_start, window_end = stats_period_window(args.stats_period)
+
     project_info = sentry_get_json(
         base_url,
         f"/api/0/projects/{org}/{project}/",
@@ -179,22 +243,28 @@ def main() -> int:
     if not project_id:
         raise SystemExit("Failed to resolve Sentry project id")
 
-    issues_raw = sentry_get_json(
+    issues_all = sentry_get_all_pages(
         base_url,
         f"/api/0/projects/{org}/{project}/issues/",
         token,
         {
             "statsPeriod": args.stats_period,
-            "limit": max(args.limit * 5, 100),
+            "limit": 100,
+            "query": build_query(environment=environment),
         },
     )
-    issues_all = issues_raw if isinstance(issues_raw, list) else []
     issues_seen = [
         summarize_issue(issue, args.stats_period)
         for issue in issues_all
         if issue_window_count(issue, args.stats_period) > 0
     ]
     unresolved_seen = [issue for issue in issues_seen if issue["status"] == "unresolved"]
+    issue_events_seen = sum(issue["count_window"] for issue in issues_seen)
+    for issue in issues_seen:
+        issue["events_seen_24h"] = issue.pop("count_window")
+    for issue in unresolved_seen:
+        if "count_window" in issue:
+            issue["events_seen_24h"] = issue.pop("count_window")
 
     errors_raw = sentry_get_json(
         base_url,
@@ -251,6 +321,10 @@ def main() -> int:
     summary = {
         "generated_at": dt.datetime.now(tz=dt.timezone.utc).isoformat(),
         "stats_period": args.stats_period,
+        "window": {
+            "start": window_start.isoformat(),
+            "end": window_end.isoformat(),
+        },
         "org": org,
         "project": project,
         "project_id": project_id,
@@ -261,8 +335,9 @@ def main() -> int:
         "issues": {
             "groups_seen_24h": len(issues_seen),
             "unresolved_groups_seen_24h": len(unresolved_seen),
-            "top_groups": sort_top(issues_seen, "count_window", args.limit),
-            "top_unresolved_groups": sort_top(unresolved_seen, "count_window", args.limit),
+            "events_seen_24h": issue_events_seen,
+            "top_groups": sort_top(issues_seen, "events_seen_24h", args.limit),
+            "top_unresolved_groups": sort_top(unresolved_seen, "events_seen_24h", args.limit),
         },
         "transactions": {
             "count_24h": tx_count,
