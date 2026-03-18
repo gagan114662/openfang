@@ -7,7 +7,7 @@ This repo now contains a repo-local Symphony workflow contract at `WORKFLOW.md`.
 - Linear project slug: `c7d689304042`
 - GitHub repo: `gagan114662/openfang`
 - Workspace root: `~/.openfang/symphony-workspaces/openfang`
-- Required issue states: `Todo`, `In Progress`, `Human Review`, `Merging`, `Rework`
+- Required issue states: `Todo`, `In Progress`, `In Review`, `AI Delegated`
 
 ## Required environment
 

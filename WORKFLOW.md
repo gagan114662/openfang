@@ -7,9 +7,8 @@ tracker:
   active_states:
     - Todo
     - In Progress
-    - Human Review
-    - Merging
-    - Rework
+    - In Review
+    - AI Delegated
   terminal_states:
     - Closed
     - Cancelled
@@ -32,8 +31,7 @@ agent:
   max_concurrent_agents: 6
   max_turns: 20
   max_concurrent_agents_by_state:
-    Human Review: 1
-    Merging: 1
+    In Review: 1
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh app-server
   approval_policy: never
@@ -75,17 +73,16 @@ Operating rules:
 5. Before any code edits, capture a concrete reproduction signal and record it in the workpad.
 6. Run the repo's required validation for the scope before every push. For code-bearing OpenFang work this includes `cargo build --workspace --lib` and `cargo test --workspace`, plus any ticket-specific validation and live checks required by `AGENTS.md`.
 7. For PR handoff, require green current-head checks for `risk-policy-gate`, `claude-remediation-agent`, and `pr-review-harness`, plus any additional checks required by `.harness/policy.contract.json`.
-8. Do not move a ticket to `Human Review` until the PR has acceptance checklist markers, execution evidence markers, and no unresolved actionable review feedback.
+8. Do not move a ticket to `In Review` until the PR has acceptance checklist markers, execution evidence markers, and no unresolved actionable review feedback.
 9. If a task touches app behavior or browser-visible flows, capture runtime/browser evidence and ensure the PR includes the published markers from `pr-review-harness`.
 10. If blocked by missing non-GitHub auth or tools, record the blocker concisely in the workpad and move the issue according to the workflow; otherwise continue autonomously.
 
 Workflow state map:
 
 - `Todo` -> move to `In Progress`, create/update the single workpad comment, then execute.
+- `AI Delegated` -> treat as an in-flight automation state equivalent to `In Progress`.
 - `In Progress` -> continue implementation and validation.
-- `Human Review` -> do not code; poll PR/review state only.
-- `Merging` -> land the approved PR and move the issue to `Done`.
-- `Rework` -> address feedback, rerun validation, and return to `Human Review` only when green again.
+- `In Review` -> do not code; poll PR/review state only, and move to `Done` after the PR merges.
 - `Done` -> stop.
 
 Execution requirements:
