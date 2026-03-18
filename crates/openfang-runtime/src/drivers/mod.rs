@@ -5,6 +5,8 @@
 //! Mistral, Fireworks, Ollama, vLLM, and any OpenAI-compatible endpoint.
 
 pub mod anthropic;
+pub mod claude_code;
+pub mod codex_cli;
 pub mod copilot;
 pub mod fallback;
 pub mod gemini;
@@ -19,6 +21,11 @@ use openfang_types::model_catalog::{
     SAMBANOVA_BASE_URL, TOGETHER_BASE_URL, VLLM_BASE_URL, XAI_BASE_URL, ZHIPU_BASE_URL,
 };
 use std::sync::Arc;
+
+fn binary_on_path(binary: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
+}
 
 /// Provider metadata: base URL and env var name for the API key.
 struct ProviderDefaults {
@@ -186,6 +193,14 @@ fn provider_defaults(provider: &str) -> Option<ProviderDefaults> {
 pub fn create_driver(config: &DriverConfig) -> Result<Arc<dyn LlmDriver>, LlmError> {
     let provider = config.provider.as_str();
 
+    if provider == "claude-code" {
+        return Ok(Arc::new(claude_code::ClaudeCodeDriver));
+    }
+
+    if provider == "codex-cli" {
+        return Ok(Arc::new(codex_cli::CodexCliDriver));
+    }
+
     // Anthropic uses a different API format — special case
     if provider == "anthropic" {
         // Try Claude Code OAuth token first
@@ -349,8 +364,10 @@ pub fn create_driver_with_orchestration(
 pub fn known_providers() -> &'static [&'static str] {
     &[
         "anthropic",
+        "claude-code",
         "gemini",
         "openai",
+        "codex-cli",
         "groq",
         "openrouter",
         "deepseek",
@@ -374,6 +391,7 @@ pub fn known_providers() -> &'static [&'static str] {
         "minimax",
         "zhipu",
         "qianfan",
+        "bedrock",
     ]
 }
 
@@ -466,7 +484,8 @@ mod tests {
         assert!(providers.contains(&"minimax"));
         assert!(providers.contains(&"zhipu"));
         assert!(providers.contains(&"qianfan"));
-        assert_eq!(providers.len(), 26);
+        assert!(providers.contains(&"bedrock"));
+        assert_eq!(providers.len(), 29);
     }
 
     #[test]

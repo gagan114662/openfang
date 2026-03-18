@@ -537,30 +537,10 @@ async fn dispatch_message(
     let telegram_operator_route = if matches!(message.channel, crate::types::ChannelType::Telegram) {
         match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
             Ok(Some(agent_id)) => Some(agent_id),
-            Ok(None) => {
-                send_response(
-                    adapter,
-                    &message.sender,
-                    TELEGRAM_OPERATOR_MISSING.to_string(),
-                    thread_id,
-                    output_format,
-                )
-                .await;
-                return;
-            }
+            Ok(None) => None,
             Err(e) => {
                 error!("Failed resolving Telegram operator agent: {e}");
-                send_response(
-                    adapter,
-                    &message.sender,
-                    format!(
-                        "Telegram desktop mode is blocked on this Mac: failed to resolve mac-operator ({e})."
-                    ),
-                    thread_id,
-                    output_format,
-                )
-                .await;
-                return;
+                None
             }
         }
     } else {
@@ -614,9 +594,11 @@ async fn dispatch_message(
         // Other slash commands pass through to the agent
     }
 
-    if telegram_operator_route.is_some() {
+    if matches!(message.channel, crate::types::ChannelType::Telegram) {
         let normalized = text.trim().to_ascii_lowercase();
-        if matches!(normalized.as_str(), "hi" | "hello" | "hey" | "yo" | "sup") {
+        if telegram_operator_route.is_some()
+            && matches!(normalized.as_str(), "hi" | "hello" | "hey" | "yo" | "sup")
+        {
             send_response(
                 adapter,
                 &message.sender,
@@ -628,6 +610,17 @@ async fn dispatch_message(
             return;
         }
         if telegram_wants_sentry_analysis(&text) {
+            if telegram_operator_route.is_none() {
+                send_response(
+                    adapter,
+                    &message.sender,
+                    TELEGRAM_OPERATOR_MISSING.to_string(),
+                    thread_id,
+                    output_format,
+                )
+                .await;
+                return;
+            }
             let _ = adapter.send_typing(&message.sender).await;
             let response = match run_telegram_sentry_operator().await {
                 Ok(response) => response,

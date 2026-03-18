@@ -1816,6 +1816,84 @@ def attached_panel_send_point(screenshot: dict) -> tuple[float, float] | None:
     return (best["center"][0] * scale_x, best["center"][1] * scale_y)
 
 
+def set_clipboard_text(text: str) -> bool:
+    result = subprocess.run(
+        ["pbcopy"],
+        input=text,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def claude_attached_panel_paste_and_send(text: str, screenshot: dict) -> dict:
+    compose_point = attached_panel_compose_point(screenshot)
+    send_point = attached_panel_send_point(screenshot)
+    if not set_clipboard_text(text):
+        return {
+            "success": False,
+            "error": "Failed to stage prompt text in the macOS clipboard.",
+            "typed_visible": False,
+            "response_started": False,
+        }
+    if not ensure_frontmost_app("Google Chrome"):
+        return {
+            "success": False,
+            "error": "Google Chrome is not frontmost before panel-local paste fallback.",
+            "typed_visible": False,
+            "response_started": False,
+        }
+
+    responses = run_bridge(
+        [
+            {"action": "Click", "x": compose_point[0], "y": compose_point[1], "button": "left", "double": False},
+            {"action": "KeyPress", "key": "a", "modifiers": ["command"]},
+            {"action": "KeyPress", "key": "delete", "modifiers": []},
+            {"action": "KeyPress", "key": "v", "modifiers": ["command"]},
+        ]
+    )
+    time.sleep(0.8)
+
+    typed_shot = screenshot_data()
+    typed_ocr = claude_panel_ocr_text(typed_shot)
+    normalized_text = " ".join(text.lower().split())
+    typed_visible = normalized_text[:48] in " ".join(typed_ocr.lower().split())
+    prompt_still_visible = typed_visible
+    response_excerpt = ""
+    response_started = False
+    send_responses = []
+
+    if typed_visible and ensure_frontmost_app("Google Chrome"):
+        send_responses = run_bridge([{"action": "KeyPress", "key": "return", "modifiers": []}])
+        time.sleep(0.8)
+        post_shot = screenshot_data()
+        post_ocr = claude_panel_ocr_text(post_shot)
+        prompt_still_visible = normalized_text[:48] in " ".join(post_ocr.lower().split())
+        response_excerpt = extract_new_panel_response("", post_ocr, text)
+        response_started = bool(response_excerpt) or (not prompt_still_visible)
+    else:
+        post_shot = typed_shot
+        post_ocr = typed_ocr
+
+    return {
+        "success": typed_visible and response_started,
+        "typed_visible": typed_visible,
+        "prompt_still_visible": prompt_still_visible,
+        "response_started": response_started,
+        "claude_response_excerpt": response_excerpt,
+        "compose_point": compose_point,
+        "send_point": send_point,
+        "responses": responses,
+        "send_responses": send_responses,
+        "typed_screenshot_path": typed_shot.get("path"),
+        "typed_ocr_excerpt": typed_ocr[:1500],
+        "post_screenshot_path": post_shot.get("path"),
+        "post_ocr_excerpt": post_ocr[:1500],
+        "fallback": "panel_local_paste",
+    }
+
+
 def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     if not ensure_frontmost_app("Google Chrome"):
         return {
@@ -1827,13 +1905,15 @@ def claude_attached_panel_type_and_send(text: str, screenshot: dict) -> dict:
     panel_before_ocr = claude_panel_ocr_text(screenshot)
     typed_result = claude_ax_prompt(text)
     if not typed_result.get("success"):
-        return {
-            "success": False,
-            "error": "Attached Claude panel AX prompt injection failed. Refusing unsafe desktop typing fallback.",
-            "typed_visible": False,
-            "response_started": False,
-            "ax_result": typed_result,
-        }
+        fallback_result = claude_attached_panel_paste_and_send(text, screenshot)
+        fallback_result["ax_result"] = typed_result
+        if fallback_result.get("success"):
+            return fallback_result
+        fallback_result["success"] = False
+        fallback_result["error"] = (
+            "Attached Claude panel AX prompt injection failed, and the panel-local paste fallback also failed."
+        )
+        return fallback_result
 
     time.sleep(0.5)
     typed_shot = screenshot_data()
@@ -2000,7 +2080,9 @@ def sidepanel_hint_visible(page_hint: str, ocr_text: str) -> bool:
 
 def claude_stop_active_panel_if_needed(screenshot: dict, ocr_text: str) -> dict:
     lower = (ocr_text or "").lower()
-    if "stop claude" not in lower and "started debugging this browser" not in lower:
+    # "started debugging this browser" is an attached-panel banner, not a busy-state signal.
+    # Only gate on an actual Stop Claude control.
+    if "stop claude" not in lower:
         return {"stopped": False, "ready": True}
     lines = ocr_image_lines(str(screenshot.get("path") or ""))
     stop_line = find_ocr_line(lines, "stop claude")
