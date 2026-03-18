@@ -16,6 +16,11 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
+const TELEGRAM_OPERATOR_AGENT: &str = "mac-operator";
+const TELEGRAM_OPERATOR_GREETING: &str = "Ready. Tell me what to do on this Mac.";
+const TELEGRAM_OPERATOR_MISSING: &str =
+    "Telegram desktop mode is blocked on this Mac: mac-operator is not running.";
+
 /// Kernel operations needed by channel adapters.
 ///
 /// Defined here to avoid circular deps (openfang-channels can't depend on openfang-kernel).
@@ -457,6 +462,39 @@ async fn dispatch_message(
         }
     };
 
+    let telegram_operator_route = if matches!(message.channel, crate::types::ChannelType::Telegram) {
+        match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
+            Ok(Some(agent_id)) => Some(agent_id),
+            Ok(None) => {
+                send_response(
+                    adapter,
+                    &message.sender,
+                    TELEGRAM_OPERATOR_MISSING.to_string(),
+                    thread_id,
+                    output_format,
+                )
+                .await;
+                return;
+            }
+            Err(e) => {
+                error!("Failed resolving Telegram operator agent: {e}");
+                send_response(
+                    adapter,
+                    &message.sender,
+                    format!(
+                        "Telegram desktop mode is blocked on this Mac: failed to resolve mac-operator ({e})."
+                    ),
+                    thread_id,
+                    output_format,
+                )
+                .await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     // Check if it's a slash command embedded in text (e.g. "/agents")
     if text.starts_with('/') {
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
@@ -502,6 +540,21 @@ async fn dispatch_message(
             return;
         }
         // Other slash commands pass through to the agent
+    }
+
+    if telegram_operator_route.is_some() {
+        let normalized = text.trim().to_ascii_lowercase();
+        if matches!(normalized.as_str(), "hi" | "hello" | "hey" | "yo" | "sup") {
+            send_response(
+                adapter,
+                &message.sender,
+                TELEGRAM_OPERATOR_GREETING.to_string(),
+                thread_id,
+                output_format,
+            )
+            .await;
+            return;
+        }
     }
 
     // Check broadcast routing first
@@ -639,7 +692,9 @@ async fn dispatch_message(
     };
 
     // Priority 4: Use router resolution (default behavior)
-    let agent_id = if agent_id.is_none() {
+    let agent_id = if let Some(agent_id) = telegram_operator_route {
+        Some(agent_id)
+    } else if agent_id.is_none() {
         router.resolve(
             &message.channel,
             &message.sender.platform_id,

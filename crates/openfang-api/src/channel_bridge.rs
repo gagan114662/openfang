@@ -62,14 +62,32 @@ pub struct KernelBridgeAdapter {
     started_at: Instant,
 }
 
+fn format_quota_status_message(status: &openfang_kernel::scheduler::QuotaStatus) -> String {
+    let remaining = status.token_limit.saturating_sub(status.used_tokens);
+    let mins = status.reset_in_secs / 60;
+    let secs = status.reset_in_secs % 60;
+    format!(
+        "Hourly token quota reached.\n  Used: {} / {}\n  Remaining: {}\n  Resets in: {}m {}s\nUse /usage to inspect the current window.",
+        status.used_tokens, status.token_limit, remaining, mins, secs
+    )
+}
+
 #[async_trait]
 impl ChannelBridgeHandle for KernelBridgeAdapter {
     async fn send_message(&self, agent_id: AgentId, message: &str) -> Result<String, String> {
-        let result = self
-            .kernel
-            .send_message(agent_id, message)
-            .await
-            .map_err(|e| format!("{e}"))?;
+        let result = self.kernel.send_message(agent_id, message).await.map_err(|e| {
+            if matches!(
+                &e,
+                openfang_kernel::error::KernelError::OpenFang(
+                    openfang_types::error::OpenFangError::QuotaExceeded(_)
+                )
+            ) {
+                if let Some(status) = self.kernel.agent_quota_status(agent_id) {
+                    return format_quota_status_message(&status);
+                }
+            }
+            format!("{e}")
+        })?;
         Ok(result.response)
     }
 
@@ -634,7 +652,12 @@ impl ChannelBridgeHandle for KernelBridgeAdapter {
         self.kernel
             .reset_session(agent_id)
             .map_err(|e| format!("{e}"))?;
-        Ok("Session reset. Chat history cleared.".to_string())
+        let mut msg = "Session reset. Chat history cleared.".to_string();
+        if let Some(status) = self.kernel.agent_quota_status(agent_id) {
+            msg.push_str("\nNote: /new does not reset the hourly token quota.\n");
+            msg.push_str(&format_quota_status_message(&status));
+        }
+        Ok(msg)
     }
 
     async fn compact_session(&self, agent_id: AgentId) -> Result<String, String> {
@@ -681,9 +704,20 @@ impl ChannelBridgeHandle for KernelBridgeAdapter {
             .session_usage_cost(agent_id)
             .map_err(|e| format!("{e}"))?;
         let total = input + output;
-        let mut msg = format!("Session usage:\n  Input: ~{input} tokens\n  Output: ~{output} tokens\n  Total: ~{total} tokens");
+        let mut msg = format!(
+            "Session usage:\n  Input: ~{input} tokens\n  Output: ~{output} tokens\n  Total: ~{total} tokens"
+        );
         if cost > 0.0 {
             msg.push_str(&format!("\n  Estimated cost: ${cost:.4}"));
+        }
+        if let Some(status) = self.kernel.agent_quota_status(agent_id) {
+            let remaining = status.token_limit.saturating_sub(status.used_tokens);
+            let mins = status.reset_in_secs / 60;
+            let secs = status.reset_in_secs % 60;
+            msg.push_str(&format!(
+                "\n\nHourly quota:\n  Used: {}\n  Limit: {}\n  Remaining: {}\n  Resets in: {}m {}s",
+                status.used_tokens, status.token_limit, remaining, mins, secs
+            ));
         }
         Ok(msg)
     }

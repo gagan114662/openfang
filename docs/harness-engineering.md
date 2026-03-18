@@ -107,6 +107,27 @@ python3 scripts/harness/remediation_runner.py --findings artifacts/review-findin
 python3 scripts/harness/sentry_findings.py --org <org> --project <project> --query "is:unresolved level:error"
 ```
 
+## Bootstrap GitHub Variables
+
+Use the setup helper to configure the required Actions variables for Codex remediation and trusted Claude review ingestion:
+
+```bash
+python3 scripts/harness/configure_review_automation.py --repo RightNow-AI/openfang --pr <pr-number>
+```
+
+What it sets:
+
+- `OPENFANG_REMEDIATION_CMD`
+- `OPENFANG_CLAUDE_TRUSTED_APP_IDS`
+
+If Claude app IDs cannot be discovered from a PR comment/review containing `<!-- claude-review-findings -->`, pass them explicitly:
+
+```bash
+python3 scripts/harness/configure_review_automation.py \
+  --repo RightNow-AI/openfang \
+  --claude-app-id 123456
+```
+
 ## Notes
 
 - Gate and fanout are designed to avoid spending CI time on PR heads already blocked by policy.

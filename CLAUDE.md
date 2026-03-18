@@ -31,6 +31,9 @@ OpenFang is an open-source Agent Operating System written in Rust (14 crates).
 - Claude hooks: `event.kind:claude.*`
 - Claude Desktop MCP: `event.kind:mcp.tool_call.*`
 - Desktop app lifecycle: `event.kind:desktop.lifecycle.*`
+- For live Sentry summaries, do not hand-roll ad hoc curl queries or use the broken `eventsv2` path.
+- Use `python3 scripts/harness/sentry_live_summary.py --config ~/.openfang/config.toml --stats-period 24h --format json`.
+- Trust `issues.groups_seen_24h`, `issues.unresolved_groups_seen_24h`, `errors.count_24h`, and `transactions.*` from that helper rather than raw issue counts.
 
 ## Build & Verify Workflow
 After every feature implementation, the required finish gate is:

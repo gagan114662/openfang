@@ -2537,6 +2537,14 @@ impl OpenFangKernel {
         Ok((input_tokens, output_tokens, cost))
     }
 
+    /// Get the current rolling hourly token quota status for an agent.
+    pub fn agent_quota_status(
+        &self,
+        agent_id: AgentId,
+    ) -> Option<crate::scheduler::QuotaStatus> {
+        self.scheduler.quota_status(agent_id)
+    }
+
     /// Cancel an agent's currently running LLM task.
     pub fn stop_agent_run(&self, agent_id: AgentId) -> KernelResult<bool> {
         if let Some((_, handle)) = self.running_tasks.remove(&agent_id) {

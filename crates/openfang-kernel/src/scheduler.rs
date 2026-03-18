@@ -19,6 +19,17 @@ pub struct UsageTracker {
     pub window_start: Instant,
 }
 
+/// Snapshot of an agent's rolling hourly token quota status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuotaStatus {
+    /// Tokens already consumed in the current window.
+    pub used_tokens: u64,
+    /// Configured hourly token limit.
+    pub token_limit: u64,
+    /// Seconds remaining until the current hourly window resets.
+    pub reset_in_secs: u64,
+}
+
 impl Default for UsageTracker {
     fn default() -> Self {
         Self {
@@ -98,6 +109,22 @@ impl AgentScheduler {
         Ok(())
     }
 
+    /// Return the current hourly token quota status for an agent, if configured.
+    pub fn quota_status(&self, agent_id: AgentId) -> Option<QuotaStatus> {
+        let quota = self.quotas.get(&agent_id)?;
+        if quota.max_llm_tokens_per_hour == 0 {
+            return None;
+        }
+        let mut tracker = self.usage.get_mut(&agent_id)?;
+        tracker.reset_if_expired();
+        let elapsed = tracker.window_start.elapsed().as_secs();
+        Some(QuotaStatus {
+            used_tokens: tracker.total_tokens,
+            token_limit: quota.max_llm_tokens_per_hour,
+            reset_in_secs: 3600_u64.saturating_sub(elapsed),
+        })
+    }
+
     /// Abort an agent's active task.
     pub fn abort_task(&self, agent_id: AgentId) {
         if let Some((_, handle)) = self.tasks.remove(&agent_id) {
@@ -164,5 +191,27 @@ mod tests {
             },
         );
         assert!(scheduler.check_quota(id).is_err());
+    }
+
+    #[test]
+    fn test_quota_status() {
+        let scheduler = AgentScheduler::new();
+        let id = AgentId::new();
+        let quota = ResourceQuota {
+            max_llm_tokens_per_hour: 100,
+            ..Default::default()
+        };
+        scheduler.register(id, quota);
+        scheduler.record_usage(
+            id,
+            &TokenUsage {
+                input_tokens: 40,
+                output_tokens: 20,
+            },
+        );
+        let status = scheduler.quota_status(id).unwrap();
+        assert_eq!(status.used_tokens, 60);
+        assert_eq!(status.token_limit, 100);
+        assert!(status.reset_in_secs <= 3600);
     }
 }

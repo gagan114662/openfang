@@ -26,6 +26,7 @@ config.toml
 *.pfx
 
 # Runtime artifacts
+artifacts/
 collector_hand_state.json
 collector_knowledge_base.json
 predictions_database.json
