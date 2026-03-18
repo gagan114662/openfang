@@ -33,7 +33,7 @@ agent:
   max_concurrent_agents_by_state:
     In Review: 1
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh app-server
+  command: CODEX_HOME="$PWD/.codex-home" codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:

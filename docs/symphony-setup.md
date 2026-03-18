@@ -36,5 +36,6 @@ Optional overrides:
 
 - Symphony polls Linear for issues in the configured states.
 - Each issue gets its own isolated workspace clone.
+- Each worker uses a workspace-local `CODEX_HOME` so Codex state, sessions, and snapshots stay inside the issue workspace instead of colliding with the global `~/.codex` path.
 - PR cleanup on terminal issue states is handled by `scripts/symphony/before_remove.sh`.
 - Human handoff is blocked by the OpenFang PR gate stack described in `docs/harness-engineering.md`.
