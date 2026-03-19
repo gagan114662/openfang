@@ -14,3 +14,5 @@ pub mod stream_dedup;
 pub mod types;
 pub mod webchat;
 pub mod ws;
+pub mod ws_types;
+pub mod ws_v1;

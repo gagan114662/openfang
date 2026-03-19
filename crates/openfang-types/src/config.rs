@@ -1151,6 +1151,40 @@ impl Default for SentryConfig {
     }
 }
 
+/// WebSocket v1 multiplexed transport configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WsConfig {
+    /// Whether the WS v1 endpoint is enabled.
+    pub enabled: bool,
+    /// Default credit window per subscription stream.
+    pub default_credits: u32,
+    /// Session resume time-to-live in milliseconds.
+    pub resume_ttl_ms: u64,
+    /// Default codec for outbound frames ("json" or "msgpack").
+    pub default_codec: String,
+    /// Maximum inbound frame size in bytes.
+    pub max_frame_bytes: usize,
+    /// Ping interval in milliseconds.
+    pub ping_interval_ms: u64,
+    /// Idle connection timeout in milliseconds.
+    pub idle_timeout_ms: u64,
+}
+
+impl Default for WsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_credits: 256,
+            resume_ttl_ms: 30_000,
+            default_codec: "json".to_string(),
+            max_frame_bytes: 1_048_576, // 1 MiB
+            ping_interval_ms: 30_000,
+            idle_timeout_ms: 120_000,
+        }
+    }
+}
+
 /// Top-level kernel configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1286,6 +1320,9 @@ pub struct KernelConfig {
     /// Sentry AI Monitoring configuration.
     #[serde(default)]
     pub sentry: SentryConfig,
+    /// WebSocket v1 multiplexed transport configuration.
+    #[serde(default)]
+    pub ws: WsConfig,
 }
 
 /// Global spending budget configuration.
@@ -1435,6 +1472,7 @@ impl Default for KernelConfig {
             raindrop: RaindropConfig::default(),
             rlm: RlmConfig::default(),
             sentry: SentryConfig::default(),
+            ws: WsConfig::default(),
         }
     }
 }
@@ -1535,6 +1573,7 @@ impl std::fmt::Debug for KernelConfig {
                     self.rlm.postgres_connections.len()
                 ),
             )
+            .field("ws", &format!("enabled={}", self.ws.enabled))
             .finish()
     }
 }
