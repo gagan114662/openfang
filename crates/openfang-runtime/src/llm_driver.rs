@@ -59,6 +59,8 @@ pub struct CompletionRequest {
     pub system: Option<String>,
     /// Extended thinking configuration (if supported by the model).
     pub thinking: Option<openfang_types::config::ThinkingConfig>,
+    /// Optional Sentry parent span for distributed tracing.
+    pub sentry_parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>>,
 }
 
 /// A response from an LLM completion.
@@ -270,6 +272,7 @@ mod tests {
             temperature: 0.0,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let response = driver.stream(request, tx).await.unwrap();

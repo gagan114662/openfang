@@ -629,6 +629,7 @@ fn select_branch_model(
         temperature: 0.2,
         system: None,
         thinking: None,
+        sentry_parent_span: None,
     };
     let (_, model) = router.select_model(&probe);
     model

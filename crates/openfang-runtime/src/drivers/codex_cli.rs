@@ -716,6 +716,7 @@ mod tests {
             temperature: 0.0,
             system: Some("You are helpful.".to_string()),
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let prompt = serialize_prompt(&request);
@@ -744,6 +745,7 @@ mod tests {
             temperature: 0.0,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let prompt = serialize_prompt(&request);

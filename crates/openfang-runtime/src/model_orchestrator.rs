@@ -113,6 +113,7 @@ mod tests {
             temperature: 0.7,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         assert_eq!(orchestrator.classify_task(&request), TaskType::Research);
@@ -133,6 +134,7 @@ mod tests {
             temperature: 0.7,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         assert_eq!(orchestrator.classify_task(&request), TaskType::Coding);
@@ -153,6 +155,7 @@ mod tests {
             temperature: 0.7,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         assert_eq!(orchestrator.classify_task(&request), TaskType::QuickQA);

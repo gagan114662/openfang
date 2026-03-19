@@ -452,6 +452,7 @@ async fn summarize_messages(
                 .to_string(),
         ),
         thinking: None,
+        sentry_parent_span: None,
     };
 
     // Retry logic for transient failures
@@ -567,6 +568,7 @@ async fn summarize_in_chunks(
                 .to_string(),
         ),
         thinking: None,
+        sentry_parent_span: None,
     };
 
     match driver.complete(merge_request).await {

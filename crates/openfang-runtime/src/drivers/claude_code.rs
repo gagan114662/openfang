@@ -592,6 +592,7 @@ mod tests {
             temperature: 0.0,
             system: None,
             thinking: None,
+            sentry_parent_span: None,
         };
 
         let prompt = serialize_messages(&request);
