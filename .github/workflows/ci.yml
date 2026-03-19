@@ -63,7 +63,10 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-      - run: cargo test --workspace
+      - name: Run tests
+        env:
+          RUST_TEST_THREADS: "4"
+        run: cargo test --workspace
 
   ci-clippy:
     name: ci-clippy
