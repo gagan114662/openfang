@@ -63,19 +63,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-      - name: Increase swap for test memory headroom
-        run: |
-          sudo fallocate -l 4G /mnt/swapfile2
-          sudo chmod 600 /mnt/swapfile2
-          sudo mkswap /mnt/swapfile2
-          sudo swapon /mnt/swapfile2
-          free -h
-      - name: Compile tests
-        run: cargo test --workspace --no-run
-      - name: Run tests
-        env:
-          RUST_TEST_THREADS: "4"
-        run: cargo test --workspace
+      - run: cargo test --workspace
 
   ci-clippy:
     name: ci-clippy
