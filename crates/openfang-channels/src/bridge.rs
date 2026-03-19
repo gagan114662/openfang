@@ -82,12 +82,10 @@ async fn run_telegram_sentry_operator() -> Result<String, String> {
         .get("failure_reason")
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| {
-            if stderr.is_empty() {
-                "desktop helper failed"
-            } else {
-                stderr.as_str()
-            }
+        .unwrap_or(if stderr.is_empty() {
+            "desktop helper failed"
+        } else {
+            stderr.as_str()
         });
     Err(format!("Operator blocked at {phase}: {reason}"))
 }
@@ -580,51 +578,44 @@ async fn dispatch_message(
         // Other slash commands pass through to the agent
     }
 
-    if matches!(message.channel, crate::types::ChannelType::Telegram) {
-        if telegram_wants_sentry_analysis(&text) {
-            match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
-                Ok(Some(_)) => {}
-                Ok(None) => {
-                    send_response(
-                        adapter,
-                        &message.sender,
-                        TELEGRAM_OPERATOR_MISSING.to_string(),
-                        thread_id,
-                        output_format,
-                    )
-                    .await;
-                    return;
-                }
-                Err(e) => {
-                    error!("Failed resolving Telegram operator agent: {e}");
-                    send_response(
-                        adapter,
-                        &message.sender,
-                        format!(
-                            "Telegram desktop mode is blocked on this Mac: failed to resolve mac-operator ({e})."
-                        ),
-                        thread_id,
-                        output_format,
-                    )
-                    .await;
-                    return;
-                }
+    if matches!(message.channel, crate::types::ChannelType::Telegram)
+        && telegram_wants_sentry_analysis(&text)
+    {
+        match handle.find_agent_by_name(TELEGRAM_OPERATOR_AGENT).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                send_response(
+                    adapter,
+                    &message.sender,
+                    TELEGRAM_OPERATOR_MISSING.to_string(),
+                    thread_id,
+                    output_format,
+                )
+                .await;
+                return;
             }
-            let _ = adapter.send_typing(&message.sender).await;
-            let response = match run_telegram_sentry_operator().await {
-                Ok(response) => response,
-                Err(error) => error,
-            };
-            send_response(
-                adapter,
-                &message.sender,
-                response,
-                thread_id,
-                output_format,
-            )
-            .await;
-            return;
+            Err(e) => {
+                error!("Failed resolving Telegram operator agent: {e}");
+                send_response(
+                    adapter,
+                    &message.sender,
+                    format!(
+                        "Telegram desktop mode is blocked on this Mac: failed to resolve mac-operator ({e})."
+                    ),
+                    thread_id,
+                    output_format,
+                )
+                .await;
+                return;
+            }
         }
+        let _ = adapter.send_typing(&message.sender).await;
+        let response = match run_telegram_sentry_operator().await {
+            Ok(response) => response,
+            Err(error) => error,
+        };
+        send_response(adapter, &message.sender, response, thread_id, output_format).await;
+        return;
     }
 
     // Check broadcast routing first
