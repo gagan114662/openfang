@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate remote hygiene
-        run: python3 scripts/harness/validate_git_remotes.py --repo .
+        run: python3 scripts/harness/validate_git_remotes.py --repo . --require-canonical origin
 
   ci-check:
     name: ci-check
