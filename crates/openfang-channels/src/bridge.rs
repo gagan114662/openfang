@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use openfang_types::agent::AgentId;
-use std::path::PathBuf;
 use openfang_types::config::{ChannelOverrides, DmPolicy, GroupPolicy, OutputFormat};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -31,7 +31,9 @@ fn telegram_wants_sentry_analysis(text: &str) -> bool {
 
 fn desktop_control_script_path() -> PathBuf {
     if let Ok(root) = std::env::var("OPENFANG_POLICY_REPO_ROOT") {
-        let candidate = PathBuf::from(root).join("scripts").join("desktop_control.py");
+        let candidate = PathBuf::from(root)
+            .join("scripts")
+            .join("desktop_control.py");
         if candidate.exists() {
             return candidate;
         }
@@ -71,7 +73,9 @@ async fn run_telegram_sentry_operator() -> Result<String, String> {
         {
             return Ok(excerpt.to_string());
         }
-        return Ok("Opened Sentry in Chrome and submitted the analysis prompt to Claude.".to_string());
+        return Ok(
+            "Opened Sentry in Chrome and submitted the analysis prompt to Claude.".to_string(),
+        );
     }
 
     let phase = payload

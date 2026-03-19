@@ -28,9 +28,12 @@ impl LlmDriver for ClaudeCodeDriver {
             Some(request.model.trim().to_string())
         };
 
-        let result =
-            run_claude_streaming(&prompt, requested_model.as_deref(), request.system.as_deref())
-                .await;
+        let result = run_claude_streaming(
+            &prompt,
+            requested_model.as_deref(),
+            request.system.as_deref(),
+        )
+        .await;
 
         // Guardrail: if claude rejects request format and we passed a model,
         // retry once without --model because aliases/versions may drift.

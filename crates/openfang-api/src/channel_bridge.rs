@@ -75,19 +75,23 @@ fn format_quota_status_message(status: &openfang_kernel::scheduler::QuotaStatus)
 #[async_trait]
 impl ChannelBridgeHandle for KernelBridgeAdapter {
     async fn send_message(&self, agent_id: AgentId, message: &str) -> Result<String, String> {
-        let result = self.kernel.send_message(agent_id, message).await.map_err(|e| {
-            if matches!(
-                &e,
-                openfang_kernel::error::KernelError::OpenFang(
-                    openfang_types::error::OpenFangError::QuotaExceeded(_)
-                )
-            ) {
-                if let Some(status) = self.kernel.agent_quota_status(agent_id) {
-                    return format_quota_status_message(&status);
+        let result = self
+            .kernel
+            .send_message(agent_id, message)
+            .await
+            .map_err(|e| {
+                if matches!(
+                    &e,
+                    openfang_kernel::error::KernelError::OpenFang(
+                        openfang_types::error::OpenFangError::QuotaExceeded(_)
+                    )
+                ) {
+                    if let Some(status) = self.kernel.agent_quota_status(agent_id) {
+                        return format_quota_status_message(&status);
+                    }
                 }
-            }
-            format!("{e}")
-        })?;
+                format!("{e}")
+            })?;
         Ok(result.response)
     }
 
