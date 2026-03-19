@@ -332,11 +332,8 @@ async fn handle_frame(conn: &Arc<Conn>, state: &Arc<AppState>, frame: WsFrame) {
                         sub.filter,
                     ),
                     _ => {
-                        conn.send_error(
-                            "UNKNOWN_TOPIC",
-                            &format!("Unknown topic: {}", sub.topic),
-                        )
-                        .await;
+                        conn.send_error("UNKNOWN_TOPIC", &format!("Unknown topic: {}", sub.topic))
+                            .await;
                         return;
                     }
                 };
