@@ -8,6 +8,7 @@ pub mod middleware;
 pub mod openai_compat;
 pub mod rate_limiter;
 pub mod routes;
+pub mod sentry_logs;
 pub mod server;
 pub mod stream_chunker;
 pub mod stream_dedup;
