@@ -4347,6 +4347,7 @@ dependencies = [
  "openfang-types",
  "openfang-wire",
  "reqwest 0.12.28",
+ "sentry",
  "serde",
  "serde_json",
  "subtle",
@@ -4378,6 +4379,7 @@ dependencies = [
  "hmac",
  "lettre",
  "openfang-types",
+ "rand 0.8.5",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4445,6 +4447,34 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "openfang-experiments"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "hex",
+ "openfang-memory",
+ "openfang-runtime",
+ "openfang-types",
+ "regex-lite",
+ "sentry",
+ "sentry-tracing",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

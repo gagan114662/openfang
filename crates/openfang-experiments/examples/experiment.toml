@@ -1,0 +1,21 @@
+name = "customer-support-prompt"
+base_prompt = "You are a helpful customer support agent. Be concise and empathetic."
+test_message = "My order #12345 hasn't arrived yet. It's been 2 weeks."
+max_iterations = 5
+
+[model]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+# Uses CLAUDE_CODE_OAUTH_TOKEN by default for anthropic provider
+# Set api_key_env to override: api_key_env = "ANTHROPIC_API_KEY"
+
+# MVP default: deterministic regex scoring
+[scoring]
+strategy = "regex_match"
+patterns = ["sorry", "order", "tracking", "help"]
+expected_matches = 4
+
+[mutation]
+strategy = "llm_mutator"
+max_prompt_growth_pct = 20
+max_prompt_length = 4096
