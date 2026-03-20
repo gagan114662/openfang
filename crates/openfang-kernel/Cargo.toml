@@ -37,6 +37,7 @@ hex = { workspace = true }
 reqwest = { workspace = true }
 sentry = { workspace = true }
 sentry-tracing = { workspace = true }
+tracing-appender = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

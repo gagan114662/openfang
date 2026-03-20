@@ -503,6 +503,11 @@ pub async fn build_router(
         .route("/hooks/wake", axum::routing::post(routes::webhook_wake))
         .route("/hooks/agent", axum::routing::post(routes::webhook_agent))
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
+        // Telemetry ingestion endpoint
+        .route(
+            "/api/telemetry/structured",
+            axum::routing::post(routes::telemetry_structured),
+        )
         // Chat commands endpoint (dynamic slash menu)
         .route("/api/commands", axum::routing::get(routes::list_commands))
         // Config reload endpoint

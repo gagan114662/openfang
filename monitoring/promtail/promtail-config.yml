@@ -1,0 +1,49 @@
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: openfang
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: openfang
+          __path__: /data/logs/openfang*.log
+
+    pipeline_stages:
+      # Parse the top-level JSON produced by tracing-subscriber
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            target: target
+            fields: fields
+
+      # Extract nested fields (agent info, message)
+      - json:
+          expressions:
+            message: message
+            agent: agent
+            agent_id: agent_id
+            step: step
+          source: fields
+
+      # Use the log-line timestamp instead of ingestion time
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+
+      # Use the message field as the log line for readability
+      - output:
+          source: message
+
+      # Promote low-cardinality fields to Loki labels
+      - labels:
+          level:
+          agent:

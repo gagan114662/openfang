@@ -93,11 +93,17 @@ pub struct AgentLoopResult {
 
 struct TransactionFinisher {
     transaction: sentry::TransactionOrSpan,
+    flush_on_drop: bool,
+    flush_timeout_ms: u64,
 }
 
 impl TransactionFinisher {
     fn new(transaction: sentry::TransactionOrSpan) -> Self {
-        Self { transaction }
+        Self {
+            transaction,
+            flush_on_drop: true,
+            flush_timeout_ms: 500,
+        }
     }
 }
 
@@ -105,7 +111,47 @@ impl Drop for TransactionFinisher {
     fn drop(&mut self) {
         self.transaction.clone().finish();
         sentry::configure_scope(|scope| scope.set_span(None));
+        if self.flush_on_drop {
+            if let Some(client) = sentry::Hub::current().client() {
+                client.flush(Some(std::time::Duration::from_millis(
+                    self.flush_timeout_ms,
+                )));
+            }
+        }
     }
+}
+
+/// Emit a structured lifecycle event to Sentry with agent context.
+fn emit_lifecycle_event(
+    event_kind: &str,
+    agent_name: &str,
+    agent_id: &str,
+    extra: serde_json::Value,
+) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("event.kind", event_kind);
+            scope.set_tag("agent.name", agent_name);
+            scope.set_tag("agent.id", agent_id);
+            if let serde_json::Value::Object(map) = &extra {
+                for (k, v) in map {
+                    if let Some(s) = v.as_str() {
+                        scope.set_extra(k, sentry::protocol::Value::String(s.to_string()));
+                    } else if let Some(n) = v.as_u64() {
+                        scope.set_extra(k, sentry::protocol::Value::from(n));
+                    } else if let Some(b) = v.as_bool() {
+                        scope.set_extra(k, sentry::protocol::Value::Bool(b));
+                    }
+                }
+            }
+        },
+        || {
+            sentry::capture_message(
+                &format!("[{event_kind}] agent={agent_name}"),
+                sentry::Level::Info,
+            );
+        },
+    );
 }
 
 /// Run the agent execution loop for a single user message.
@@ -135,7 +181,7 @@ pub async fn run_agent_loop(
     context_window_tokens: Option<usize>,
     process_manager: Option<&crate::process_manager::ProcessManager>,
 ) -> OpenFangResult<AgentLoopResult> {
-    info!(agent = %manifest.name, "Starting agent loop");
+    info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting agent loop");
 
     // Start Sentry transaction for performance monitoring
     let transaction = sentry::start_transaction(sentry::TransactionContext::new(
@@ -153,6 +199,13 @@ pub async fn run_agent_loop(
     transaction.set_data("model", manifest.model.model.clone().into());
     transaction.set_data("provider", manifest.model.provider.clone().into());
     transaction.set_data("user_message_len", user_message.len().into());
+
+    emit_lifecycle_event(
+        "runtime.agent_loop.started",
+        &manifest.name,
+        &session.agent_id.to_string(),
+        serde_json::json!({"streaming": false}),
+    );
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -317,7 +370,7 @@ pub async fn run_agent_loop(
     let context_budget = ContextBudget::new(ctx_window);
 
     for iteration in 0..max_iterations {
-        debug!(iteration, "Agent loop iteration");
+        debug!(iteration, agent_id = %agent_id_str, agent_name = %manifest.name, step = iteration, "Agent loop iteration");
 
         // Context overflow recovery pipeline (replaces emergency_trim_messages)
         let recovery =
@@ -329,6 +382,9 @@ pub async fn run_agent_loop(
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
 
+        let parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
+            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
+
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
             messages: messages.clone(),
@@ -337,7 +393,7 @@ pub async fn run_agent_loop(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
-            sentry_parent_span: None,
+            sentry_parent_span: parent_span,
         };
 
         // Notify phase: Thinking
@@ -399,6 +455,12 @@ pub async fn run_agent_loop(
                     memory
                         .save_session(session)
                         .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+                    emit_lifecycle_event(
+                        "runtime.agent_loop.completed",
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({"iterations": iteration + 1, "silent": true}),
+                    );
                     transaction.set_status(sentry::protocol::SpanStatus::Ok);
                     return Ok(AgentLoopResult {
                         response: String::new(),
@@ -518,6 +580,8 @@ pub async fn run_agent_loop(
 
                 info!(
                     agent = %manifest.name,
+                    agent_id = %agent_id_str,
+                    step = iteration + 1,
                     iterations = iteration + 1,
                     tokens = total_usage.total(),
                     "Agent loop completed"
@@ -537,6 +601,12 @@ pub async fn run_agent_loop(
                     let _ = hook_reg.fire(&ctx);
                 }
 
+                emit_lifecycle_event(
+                    "runtime.agent_loop.completed",
+                    &manifest.name,
+                    &agent_id_str,
+                    serde_json::json!({"iterations": iteration + 1}),
+                );
                 transaction.set_status(sentry::protocol::SpanStatus::Ok);
                 return Ok(AgentLoopResult {
                     response: final_response,
@@ -594,6 +664,12 @@ pub async fn run_agent_loop(
                                 };
                                 let _ = hook_reg.fire(&ctx);
                             }
+                            emit_lifecycle_event(
+                                "runtime.agent_loop.failed",
+                                &manifest.name,
+                                &agent_id_str,
+                                serde_json::json!({"reason": "circuit_break"}),
+                            );
                             transaction.set_status(sentry::protocol::SpanStatus::InternalError);
                             return Err(OpenFangError::Internal(msg.clone()));
                         }
@@ -609,7 +685,7 @@ pub async fn run_agent_loop(
                         _ => {} // Allow or Warn — proceed with execution
                     }
 
-                    debug!(tool = %tool_call.name, id = %tool_call.id, "Executing tool");
+                    debug!(tool = %tool_call.name, id = %tool_call.id, agent_id = %agent_id_str, step = iteration, "Executing tool");
 
                     // Notify phase: ToolUse
                     if let Some(cb) = on_phase {
@@ -651,6 +727,25 @@ pub async fn run_agent_loop(
                     // Resolve effective exec policy (per-agent override or global)
                     let effective_exec_policy = manifest.exec_policy.as_ref();
 
+                    // Start Sentry span for this tool call
+                    let tool_span = sentry::configure_scope(|scope| {
+                        scope.get_span().map(|parent| {
+                            let child = parent
+                                .start_child("tool.execution", &format!("tool:{}", tool_call.name));
+                            child.set_data("tool_name", tool_call.name.clone().into());
+                            child.set_data("tool_call_id", tool_call.id.clone().into());
+                            child
+                        })
+                    });
+                    let tool_start = std::time::Instant::now();
+
+                    emit_lifecycle_event(
+                        "runtime.tool_call.started",
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({"tool_name": &tool_call.name, "tool_call_id": &tool_call.id}),
+                    );
+
                     // Timeout-wrapped execution
                     let result = match tokio::time::timeout(
                         Duration::from_secs(TOOL_TIMEOUT_SECS),
@@ -683,9 +778,26 @@ pub async fn run_agent_loop(
                     )
                     .await
                     {
-                        Ok(result) => result,
+                        Ok(result) => {
+                            if let Some(ref sp) = tool_span {
+                                let duration_ms = tool_start.elapsed().as_millis() as u64;
+                                sp.set_data("duration_ms", duration_ms.into());
+                                sp.set_data("is_error", result.is_error.into());
+                                sp.set_status(if result.is_error {
+                                    sentry::protocol::SpanStatus::InternalError
+                                } else {
+                                    sentry::protocol::SpanStatus::Ok
+                                });
+                            }
+                            result
+                        }
                         Err(_) => {
                             warn!(tool = %tool_call.name, "Tool execution timed out after {}s", TOOL_TIMEOUT_SECS);
+                            if let Some(ref sp) = tool_span {
+                                sp.set_data("duration_ms", (TOOL_TIMEOUT_SECS * 1000).into());
+                                sp.set_data("is_error", true.into());
+                                sp.set_status(sentry::protocol::SpanStatus::DeadlineExceeded);
+                            }
                             openfang_types::tool::ToolResult {
                                 tool_use_id: tool_call.id.clone(),
                                 content: format!(
@@ -696,6 +808,29 @@ pub async fn run_agent_loop(
                             }
                         }
                     };
+
+                    let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+
+                    // Finish the tool span
+                    if let Some(sp) = tool_span {
+                        sp.finish();
+                    }
+
+                    emit_lifecycle_event(
+                        if result.is_error {
+                            "runtime.tool_call.failed"
+                        } else {
+                            "runtime.tool_call.completed"
+                        },
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({
+                            "tool_name": &tool_call.name,
+                            "tool_call_id": &tool_call.id,
+                            "duration_ms": tool_duration_ms,
+                            "is_error": result.is_error,
+                        }),
+                    );
 
                     // Fire AfterToolCall hook
                     if let Some(hook_reg) = hooks {
@@ -759,6 +894,8 @@ pub async fn run_agent_loop(
                     warn!(
                         iteration,
                         consecutive_max_tokens,
+                        agent_id = %agent_id_str,
+                        step = iteration,
                         "Max continuations reached, returning partial response"
                     );
                     // Fire AgentLoopEnd hook
@@ -774,6 +911,12 @@ pub async fn run_agent_loop(
                         };
                         let _ = hook_reg.fire(&ctx);
                     }
+                    emit_lifecycle_event(
+                        "runtime.agent_loop.failed",
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({"reason": "max_continuations", "iterations": iteration + 1}),
+                    );
                     transaction.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
                     return Ok(AgentLoopResult {
                         response: text,
@@ -797,7 +940,7 @@ pub async fn run_agent_loop(
 
     // Save session before failing so conversation history is preserved
     if let Err(e) = memory.save_session(session) {
-        warn!("Failed to save session on max iterations: {e}");
+        warn!(agent_id = %agent_id_str, "Failed to save session on max iterations: {e}");
     }
 
     // Fire AgentLoopEnd hook on max iterations exceeded
@@ -814,6 +957,12 @@ pub async fn run_agent_loop(
         let _ = hook_reg.fire(&ctx);
     }
 
+    emit_lifecycle_event(
+        "runtime.agent_loop.failed",
+        &manifest.name,
+        &agent_id_str,
+        serde_json::json!({"reason": "max_iterations_exceeded", "iterations": max_iterations}),
+    );
     transaction.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
     Err(OpenFangError::MaxIterationsExceeded(max_iterations))
 }
@@ -1210,7 +1359,32 @@ pub async fn run_agent_loop_streaming(
     context_window_tokens: Option<usize>,
     process_manager: Option<&crate::process_manager::ProcessManager>,
 ) -> OpenFangResult<AgentLoopResult> {
-    info!(agent = %manifest.name, "Starting streaming agent loop");
+    info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting streaming agent loop");
+
+    // Start Sentry transaction for performance monitoring (streaming variant)
+    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+        "agent.loop.streaming",
+        "ai-inference",
+    ));
+    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
+    sentry::configure_scope(|scope| {
+        scope.set_span(Some(transaction.clone().into()));
+    });
+
+    // Set transaction metadata
+    transaction.set_data("agent_name", manifest.name.clone().into());
+    transaction.set_data("agent_id", session.agent_id.to_string().into());
+    transaction.set_data("model", manifest.model.model.clone().into());
+    transaction.set_data("provider", manifest.model.provider.clone().into());
+    transaction.set_data("user_message_len", user_message.len().into());
+    transaction.set_data("streaming", true.into());
+
+    emit_lifecycle_event(
+        "runtime.agent_loop.started",
+        &manifest.name,
+        &session.agent_id.to_string(),
+        serde_json::json!({"streaming": true}),
+    );
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -1371,7 +1545,7 @@ pub async fn run_agent_loop_streaming(
     let context_budget = ContextBudget::new(ctx_window);
 
     for iteration in 0..max_iterations {
-        debug!(iteration, "Streaming agent loop iteration");
+        debug!(iteration, agent_id = %agent_id_str, agent_name = %manifest.name, step = iteration, "Streaming agent loop iteration");
 
         // Context overflow recovery pipeline (replaces emergency_trim_messages)
         let recovery =
@@ -1399,6 +1573,9 @@ pub async fn run_agent_loop_streaming(
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
 
+        let parent_span_s: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
+            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
+
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
             messages: messages.clone(),
@@ -1407,7 +1584,7 @@ pub async fn run_agent_loop_streaming(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
-            sentry_parent_span: None,
+            sentry_parent_span: parent_span_s,
         };
 
         // Notify phase: Streaming (streaming variant always streams)
@@ -1473,6 +1650,12 @@ pub async fn run_agent_loop_streaming(
                     memory
                         .save_session(session)
                         .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+                    emit_lifecycle_event(
+                        "runtime.agent_loop.completed",
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({"iterations": iteration + 1, "silent": true, "streaming": true}),
+                    );
                     return Ok(AgentLoopResult {
                         response: String::new(),
                         total_usage,
@@ -1589,6 +1772,8 @@ pub async fn run_agent_loop_streaming(
 
                 info!(
                     agent = %manifest.name,
+                    agent_id = %agent_id_str,
+                    step = iteration + 1,
                     iterations = iteration + 1,
                     tokens = total_usage.total(),
                     "Streaming agent loop completed"
@@ -1608,6 +1793,12 @@ pub async fn run_agent_loop_streaming(
                     let _ = hook_reg.fire(&ctx);
                 }
 
+                emit_lifecycle_event(
+                    "runtime.agent_loop.completed",
+                    &manifest.name,
+                    &agent_id_str,
+                    serde_json::json!({"iterations": iteration + 1, "streaming": true}),
+                );
                 return Ok(AgentLoopResult {
                     response: final_response,
                     total_usage,
@@ -1660,6 +1851,12 @@ pub async fn run_agent_loop_streaming(
                                 };
                                 let _ = hook_reg.fire(&ctx);
                             }
+                            emit_lifecycle_event(
+                                "runtime.agent_loop.failed",
+                                &manifest.name,
+                                &agent_id_str,
+                                serde_json::json!({"reason": "circuit_break", "streaming": true}),
+                            );
                             return Err(OpenFangError::Internal(msg.clone()));
                         }
                         LoopGuardVerdict::Block(msg) => {
@@ -1674,7 +1871,7 @@ pub async fn run_agent_loop_streaming(
                         _ => {} // Allow or Warn — proceed with execution
                     }
 
-                    debug!(tool = %tool_call.name, id = %tool_call.id, "Executing tool (streaming)");
+                    debug!(tool = %tool_call.name, id = %tool_call.id, agent_id = %agent_id_str, step = iteration, "Executing tool (streaming)");
 
                     // Notify phase: ToolUse
                     if let Some(cb) = on_phase {
@@ -1716,6 +1913,25 @@ pub async fn run_agent_loop_streaming(
                     // Resolve effective exec policy (per-agent override or global)
                     let effective_exec_policy = manifest.exec_policy.as_ref();
 
+                    // Start Sentry span for this tool call (streaming)
+                    let tool_span = sentry::configure_scope(|scope| {
+                        scope.get_span().map(|parent| {
+                            let child = parent
+                                .start_child("tool.execution", &format!("tool:{}", tool_call.name));
+                            child.set_data("tool_name", tool_call.name.clone().into());
+                            child.set_data("tool_call_id", tool_call.id.clone().into());
+                            child
+                        })
+                    });
+                    let tool_start = std::time::Instant::now();
+
+                    emit_lifecycle_event(
+                        "runtime.tool_call.started",
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({"tool_name": &tool_call.name, "tool_call_id": &tool_call.id}),
+                    );
+
                     // Timeout-wrapped execution
                     let result = match tokio::time::timeout(
                         Duration::from_secs(TOOL_TIMEOUT_SECS),
@@ -1748,9 +1964,26 @@ pub async fn run_agent_loop_streaming(
                     )
                     .await
                     {
-                        Ok(result) => result,
+                        Ok(result) => {
+                            if let Some(ref sp) = tool_span {
+                                let duration_ms = tool_start.elapsed().as_millis() as u64;
+                                sp.set_data("duration_ms", duration_ms.into());
+                                sp.set_data("is_error", result.is_error.into());
+                                sp.set_status(if result.is_error {
+                                    sentry::protocol::SpanStatus::InternalError
+                                } else {
+                                    sentry::protocol::SpanStatus::Ok
+                                });
+                            }
+                            result
+                        }
                         Err(_) => {
                             warn!(tool = %tool_call.name, "Tool execution timed out after {}s (streaming)", TOOL_TIMEOUT_SECS);
+                            if let Some(ref sp) = tool_span {
+                                sp.set_data("duration_ms", (TOOL_TIMEOUT_SECS * 1000).into());
+                                sp.set_data("is_error", true.into());
+                                sp.set_status(sentry::protocol::SpanStatus::DeadlineExceeded);
+                            }
                             openfang_types::tool::ToolResult {
                                 tool_use_id: tool_call.id.clone(),
                                 content: format!(
@@ -1761,6 +1994,29 @@ pub async fn run_agent_loop_streaming(
                             }
                         }
                     };
+
+                    let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+
+                    // Finish the tool span
+                    if let Some(sp) = tool_span {
+                        sp.finish();
+                    }
+
+                    emit_lifecycle_event(
+                        if result.is_error {
+                            "runtime.tool_call.failed"
+                        } else {
+                            "runtime.tool_call.completed"
+                        },
+                        &manifest.name,
+                        &agent_id_str,
+                        serde_json::json!({
+                            "tool_name": &tool_call.name,
+                            "tool_call_id": &tool_call.id,
+                            "duration_ms": tool_duration_ms,
+                            "is_error": result.is_error,
+                        }),
+                    );
 
                     // Fire AfterToolCall hook
                     if let Some(hook_reg) = hooks {
@@ -1887,6 +2143,12 @@ pub async fn run_agent_loop_streaming(
         let _ = hook_reg.fire(&ctx);
     }
 
+    emit_lifecycle_event(
+        "runtime.agent_loop.failed",
+        &manifest.name,
+        &agent_id_str,
+        serde_json::json!({"reason": "max_iterations_exceeded", "iterations": max_iterations, "streaming": true}),
+    );
     Err(OpenFangError::MaxIterationsExceeded(max_iterations))
 }
 

@@ -31,21 +31,49 @@ pub struct KernelState {
 /// Entry point for the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Init tracing
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "openfang=info,tauri=info".into());
-    let sentry_layer = sentry_tracing::layer()
-        .enable_span_attributes()
-        .event_filter(|metadata| match metadata.level() {
-            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
-            _ => sentry_tracing::EventFilter::Event,
-        });
+    // Early config read for logging configuration
+    let early_config = openfang_kernel::config::load_config(None);
+    let logging = &early_config.logging;
 
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(sentry_layer)
-        .init();
+    // Init tracing
+    if logging.json_enabled {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "openfang=info,tauri=info".into());
+        let sentry_layer = sentry_tracing::layer()
+            .enable_span_attributes()
+            .event_filter(|metadata| match metadata.level() {
+                &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                _ => sentry_tracing::EventFilter::Event,
+            });
+        let (json_writer, guard) = openfang_kernel::json_logging::make_json_appender(logging);
+        std::mem::forget(guard);
+        let json_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(json_writer)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_span_list(true);
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(json_layer)
+            .with(sentry_layer)
+            .init();
+    } else {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "openfang=info,tauri=info".into());
+        let sentry_layer = sentry_tracing::layer()
+            .enable_span_attributes()
+            .event_filter(|metadata| match metadata.level() {
+                &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                _ => sentry_tracing::EventFilter::Event,
+            });
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(sentry_layer)
+            .init();
+    }
 
     info!("Starting OpenFang Desktop...");
 

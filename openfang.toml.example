@@ -64,14 +64,29 @@ max_storage_mb = 5000                    # Maximum storage (5 GB)
 # dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"  # Sentry DSN (get from sentry.io project settings)
 environment = "development"              # Environment tag (production, staging, development)
 traces_sample_rate = 1.0                 # Sample 100% of traces (reduce to 0.1 in prod for 10% sampling)
+sample_rate = 1.0                        # Event sample rate (0.0-1.0, default 1.0)
 include_prompts = false                  # Include prompts/completions in events (WARNING: may contain PII)
 performance_monitoring = true            # Track LLM call latency, tokens, cost
 error_tracking = true                    # Capture errors with full context
+realtime_log_flush = true                # Flush events immediately after transactions
+realtime_log_flush_timeout_ms = 1500     # Flush timeout in milliseconds
+# org_slug = "your-org"                 # Sentry organization slug (for API queries)
+# project_slug = "your-project"         # Sentry project slug (for API queries)
+# api_base_url = "https://sentry.io"    # Sentry API base URL
+# auth_token = "sntryu_..."             # Sentry API auth token (or use auth_token_env)
+# auth_token_env = "SENTRY_AUTH_TOKEN"  # Env var holding Sentry auth token
 
 # Optional: Custom tags added to all Sentry events
 [sentry.tags]
 # region = "us-west-2"
 # deployment = "kubernetes"
+
+# Structured JSON logging (Loki/Promtail preparation)
+[logging]
+json_enabled = false                    # Enable JSON log output to file
+# json_dir = "~/.openfang/logs"        # Log directory (default: ~/.openfang/logs)
+json_file_prefix = "openfang"           # File prefix (produces openfang.YYYY-MM-DD.log)
+rotation = "daily"                      # "daily", "hourly", or "never"
 
 # Channel adapters (configure tokens via environment variables)
 # Telegram bidirectional integration

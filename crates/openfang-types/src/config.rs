@@ -1087,6 +1087,44 @@ impl Default for RlmConfig {
     }
 }
 
+/// Log file rotation strategy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogRotation {
+    #[default]
+    Daily,
+    Hourly,
+    Never,
+}
+
+/// Structured JSON logging configuration (Loki/Promtail preparation).
+///
+/// When enabled, produces JSON log files suitable for ingestion by
+/// Promtail, Grafana Alloy, or any log shipper that understands JSON lines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    /// Enable JSON log output to file.
+    pub json_enabled: bool,
+    /// Directory for JSON log files (default: `~/.openfang/logs`).
+    pub json_dir: Option<String>,
+    /// File name prefix (produces `<prefix>.YYYY-MM-DD.log` with daily rotation).
+    pub json_file_prefix: String,
+    /// Rotation strategy: `daily`, `hourly`, or `never`.
+    pub rotation: LogRotation,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            json_enabled: false,
+            json_dir: None,
+            json_file_prefix: "openfang".to_string(),
+            rotation: LogRotation::default(),
+        }
+    }
+}
+
 /// Sentry AI Monitoring configuration.
 ///
 /// Enables real-time visibility into LLM failures, performance bottlenecks,
@@ -1123,6 +1161,46 @@ pub struct SentryConfig {
     /// Custom tags to add to all Sentry events.
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
+
+    /// Sentry API auth token (for API queries).
+    #[serde(default)]
+    pub auth_token: Option<String>,
+
+    /// Environment variable name holding the Sentry auth token.
+    #[serde(default)]
+    pub auth_token_env: Option<String>,
+
+    /// Event sample rate (0.0 to 1.0). 1.0 = capture all events.
+    #[serde(default = "default_sentry_sample_rate")]
+    pub sample_rate: f32,
+
+    /// Profiling sample rate (0.0 to 1.0). 0.0 = disabled.
+    #[serde(default)]
+    pub profiles_sample_rate: f32,
+
+    /// Flush Sentry events immediately after transactions complete.
+    #[serde(default)]
+    pub realtime_log_flush: bool,
+
+    /// Timeout in ms for realtime flush operations.
+    #[serde(default = "default_flush_timeout_ms")]
+    pub realtime_log_flush_timeout_ms: u64,
+
+    /// Sentry organization slug (for API queries).
+    #[serde(default)]
+    pub org_slug: Option<String>,
+
+    /// Sentry project slug (for API queries).
+    #[serde(default)]
+    pub project_slug: Option<String>,
+
+    /// Sentry API base URL.
+    #[serde(default = "default_sentry_api_base_url")]
+    pub api_base_url: String,
+
+    /// Sentry API timeout in seconds.
+    #[serde(default = "default_sentry_api_timeout_secs")]
+    pub api_timeout_secs: u64,
 }
 
 fn default_sentry_environment() -> String {
@@ -1137,6 +1215,18 @@ fn default_sentry_sample_rate() -> f32 {
     1.0 // 100% sampling in dev
 }
 
+fn default_flush_timeout_ms() -> u64 {
+    1500
+}
+
+fn default_sentry_api_base_url() -> String {
+    "https://sentry.io".to_string()
+}
+
+fn default_sentry_api_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for SentryConfig {
     fn default() -> Self {
         Self {
@@ -1147,6 +1237,16 @@ impl Default for SentryConfig {
             performance_monitoring: true,
             error_tracking: true,
             tags: std::collections::HashMap::new(),
+            auth_token: None,
+            auth_token_env: None,
+            sample_rate: default_sentry_sample_rate(),
+            profiles_sample_rate: 0.0,
+            realtime_log_flush: false,
+            realtime_log_flush_timeout_ms: default_flush_timeout_ms(),
+            org_slug: None,
+            project_slug: None,
+            api_base_url: default_sentry_api_base_url(),
+            api_timeout_secs: default_sentry_api_timeout_secs(),
         }
     }
 }
@@ -1323,6 +1423,9 @@ pub struct KernelConfig {
     /// WebSocket v1 multiplexed transport configuration.
     #[serde(default)]
     pub ws: WsConfig,
+    /// Structured JSON logging configuration (Loki/Promtail preparation).
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 /// Global spending budget configuration.
@@ -1473,6 +1576,7 @@ impl Default for KernelConfig {
             rlm: RlmConfig::default(),
             sentry: SentryConfig::default(),
             ws: WsConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -1574,6 +1678,10 @@ impl std::fmt::Debug for KernelConfig {
                 ),
             )
             .field("ws", &format!("enabled={}", self.ws.enabled))
+            .field(
+                "logging",
+                &format!("json_enabled={}", self.logging.json_enabled),
+            )
             .finish()
     }
 }
@@ -3576,6 +3684,18 @@ mod tests {
         let config = KernelConfig::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("log_level"));
+    }
+
+    #[test]
+    fn test_logging_config_defaults() {
+        let config = LoggingConfig::default();
+        assert!(!config.json_enabled);
+        assert_eq!(config.json_file_prefix, "openfang");
+        assert_eq!(config.rotation, LogRotation::Daily);
+        assert!(config.json_dir.is_none());
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: LoggingConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.rotation, config.rotation);
     }
 
     #[test]

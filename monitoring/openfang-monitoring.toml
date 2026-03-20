@@ -1,0 +1,9 @@
+# OpenFang monitoring config override
+# Used inside Docker containers to direct JSON logs to the shared volume
+# that Promtail scrapes.
+
+[logging]
+json_enabled = true
+json_dir = "/data/logs"
+json_file_prefix = "openfang"
+rotation = "daily"
