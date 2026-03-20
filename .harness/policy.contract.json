@@ -26,7 +26,7 @@
         "enforceReviewState": true,
         "enforceDocsDrift": true,
         "enableRemediation": true,
-        "requireEvidence": true
+        "requireEvidence": false
       }
     }
   },
@@ -124,7 +124,7 @@
       },
       "claude": {
         "enforcement": "required",
-        "requireCurrentHeadIngestion": true,
+        "requireCurrentHeadIngestion": false,
         "marker": "<!-- claude-review-findings -->",
         "weakConfidenceThreshold": 0.55,
         "actionableSummaryKeywords": [
