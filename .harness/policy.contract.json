@@ -148,7 +148,7 @@
     "claudeRemediation": {
       "enabled": true,
       "runOnEverySync": true,
-      "requireFindingsIngestion": true,
+      "requireFindingsIngestion": false,
       "maxAttemptsPerSha": 1
     }
   },
