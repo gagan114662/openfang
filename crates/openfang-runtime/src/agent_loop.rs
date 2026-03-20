@@ -89,6 +89,63 @@ pub struct AgentLoopResult {
     pub silent: bool,
     /// Reply directives extracted from the agent's response.
     pub directives: openfang_types::message::ReplyDirectives,
+    /// Evaluation metrics for this task. Kernel populates cost_per_successful_task.
+    pub eval_metrics: Option<AgentEvalMetrics>,
+}
+
+/// Structured evaluation metrics emitted at the end of every agent task.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentEvalMetrics {
+    pub task_success: bool,
+    pub autonomous_task_yield: bool,
+    pub time_to_completion_ms: u64,
+    pub cost_per_successful_task: Option<f64>,
+    pub tool_success_rate: Option<f64>,
+    pub stuck_loop_rate: Option<f64>,
+    pub human_intervention_rate: f64,
+    pub outcome: String,
+    pub tool_calls_total: u32,
+    pub tool_calls_errored: u32,
+    pub tool_calls_blocked: u32,
+}
+
+/// Build eval metrics from loop state, reducing duplication across exit points.
+fn build_eval_metrics(
+    outcome: &str,
+    loop_start: std::time::Instant,
+    tool_calls_executed: u32,
+    tool_calls_errored: u32,
+    loop_guard: &LoopGuard,
+) -> AgentEvalMetrics {
+    let guard_stats = loop_guard.stats();
+    let task_success = outcome != "failed";
+    let autonomous_task_yield = outcome == "success" || outcome == "partial";
+    let tool_success_rate = if tool_calls_executed > 0 {
+        Some(
+            (tool_calls_executed.saturating_sub(tool_calls_errored) as f64)
+                / (tool_calls_executed as f64),
+        )
+    } else {
+        None
+    };
+    let stuck_loop_rate = if guard_stats.total_calls > 0 {
+        Some(guard_stats.blocked_calls as f64 / guard_stats.total_calls as f64)
+    } else {
+        None
+    };
+    AgentEvalMetrics {
+        task_success,
+        autonomous_task_yield,
+        time_to_completion_ms: loop_start.elapsed().as_millis() as u64,
+        cost_per_successful_task: None, // Kernel populates this after the loop
+        tool_success_rate,
+        stuck_loop_rate,
+        human_intervention_rate: 0.0,
+        outcome: outcome.to_string(),
+        tool_calls_total: tool_calls_executed,
+        tool_calls_errored,
+        tool_calls_blocked: guard_stats.blocked_calls,
+    }
 }
 
 struct TransactionFinisher {
@@ -122,7 +179,7 @@ impl Drop for TransactionFinisher {
 }
 
 /// Emit a structured lifecycle event to Sentry with agent context.
-fn emit_lifecycle_event(
+pub fn emit_lifecycle_event(
     event_kind: &str,
     agent_name: &str,
     agent_id: &str,
@@ -139,6 +196,8 @@ fn emit_lifecycle_event(
                         scope.set_extra(k, sentry::protocol::Value::String(s.to_string()));
                     } else if let Some(n) = v.as_u64() {
                         scope.set_extra(k, sentry::protocol::Value::from(n));
+                    } else if let Some(f) = v.as_f64() {
+                        scope.set_extra(k, sentry::protocol::Value::from(f));
                     } else if let Some(b) = v.as_bool() {
                         scope.set_extra(k, sentry::protocol::Value::Bool(b));
                     }
@@ -365,6 +424,11 @@ pub async fn run_agent_loop(
     let mut loop_guard = LoopGuard::new(loop_guard_config);
     let mut consecutive_max_tokens: u32 = 0;
 
+    // Eval metrics: track timing and tool call outcomes
+    let loop_start = std::time::Instant::now();
+    let mut tool_calls_executed: u32 = 0;
+    let mut tool_calls_errored: u32 = 0;
+
     // Build context budget from model's actual context window (or fallback to default)
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
@@ -473,6 +537,13 @@ pub async fn run_agent_loop(
                             current_thread: parsed_directives.current_thread,
                             silent: true,
                         },
+                        eval_metrics: Some(build_eval_metrics(
+                            "success_silent",
+                            loop_start,
+                            tool_calls_executed,
+                            tool_calls_errored,
+                            &loop_guard,
+                        )),
                     });
                 }
 
@@ -615,6 +686,13 @@ pub async fn run_agent_loop(
                     cost_usd: None,
                     silent: false,
                     directives: Default::default(),
+                    eval_metrics: Some(build_eval_metrics(
+                        "success",
+                        loop_start,
+                        tool_calls_executed,
+                        tool_calls_errored,
+                        &loop_guard,
+                    )),
                 });
             }
             StopReason::ToolUse => {
@@ -651,6 +729,31 @@ pub async fn run_agent_loop(
                             if let Err(e) = memory.save_session(session) {
                                 warn!("Failed to save session on circuit break: {e}");
                             }
+                            // Emit eval metrics before returning error
+                            let metrics = build_eval_metrics(
+                                "failed",
+                                loop_start,
+                                tool_calls_executed,
+                                tool_calls_errored,
+                                &loop_guard,
+                            );
+                            info!(
+                                eval_outcome = %metrics.outcome,
+                                eval_task_success = metrics.task_success,
+                                eval_time_to_completion_ms = metrics.time_to_completion_ms,
+                                eval_tool_calls_total = metrics.tool_calls_total,
+                                eval_tool_calls_errored = metrics.tool_calls_errored,
+                                eval_tool_calls_blocked = metrics.tool_calls_blocked,
+                                agent = %manifest.name,
+                                agent_id = %agent_id_str,
+                                "Agent eval metrics (circuit_break)"
+                            );
+                            emit_lifecycle_event(
+                                "runtime.agent_loop.eval",
+                                &manifest.name,
+                                &agent_id_str,
+                                serde_json::to_value(&metrics).unwrap_or_default(),
+                            );
                             // Fire AgentLoopEnd hook on circuit break
                             if let Some(hook_reg) = hooks {
                                 let ctx = crate::hooks::HookContext {
@@ -811,6 +914,12 @@ pub async fn run_agent_loop(
 
                     let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
+                    // Eval metrics: count tool calls
+                    tool_calls_executed += 1;
+                    if result.is_error {
+                        tool_calls_errored += 1;
+                    }
+
                     // Finish the tool span
                     if let Some(sp) = tool_span {
                         sp.finish();
@@ -925,6 +1034,13 @@ pub async fn run_agent_loop(
                         cost_usd: None,
                         silent: false,
                         directives: Default::default(),
+                        eval_metrics: Some(build_eval_metrics(
+                            "partial",
+                            loop_start,
+                            tool_calls_executed,
+                            tool_calls_errored,
+                            &loop_guard,
+                        )),
                     });
                 }
                 // Model hit token limit — add partial response and continue
@@ -956,6 +1072,32 @@ pub async fn run_agent_loop(
         };
         let _ = hook_reg.fire(&ctx);
     }
+
+    // Emit eval metrics before returning error
+    let metrics = build_eval_metrics(
+        "failed",
+        loop_start,
+        tool_calls_executed,
+        tool_calls_errored,
+        &loop_guard,
+    );
+    info!(
+        eval_outcome = %metrics.outcome,
+        eval_task_success = metrics.task_success,
+        eval_time_to_completion_ms = metrics.time_to_completion_ms,
+        eval_tool_calls_total = metrics.tool_calls_total,
+        eval_tool_calls_errored = metrics.tool_calls_errored,
+        eval_tool_calls_blocked = metrics.tool_calls_blocked,
+        agent = %manifest.name,
+        agent_id = %agent_id_str,
+        "Agent eval metrics (max_iterations_exceeded)"
+    );
+    emit_lifecycle_event(
+        "runtime.agent_loop.eval",
+        &manifest.name,
+        &agent_id_str,
+        serde_json::to_value(&metrics).unwrap_or_default(),
+    );
 
     emit_lifecycle_event(
         "runtime.agent_loop.failed",
@@ -1540,6 +1682,11 @@ pub async fn run_agent_loop_streaming(
     let mut loop_guard = LoopGuard::new(loop_guard_config);
     let mut consecutive_max_tokens: u32 = 0;
 
+    // Eval metrics: track timing and tool call outcomes
+    let loop_start = std::time::Instant::now();
+    let mut tool_calls_executed: u32 = 0;
+    let mut tool_calls_errored: u32 = 0;
+
     // Build context budget from model's actual context window (or fallback to default)
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
@@ -1667,6 +1814,13 @@ pub async fn run_agent_loop_streaming(
                             current_thread: parsed_directives_s.current_thread,
                             silent: true,
                         },
+                        eval_metrics: Some(build_eval_metrics(
+                            "success_silent",
+                            loop_start,
+                            tool_calls_executed,
+                            tool_calls_errored,
+                            &loop_guard,
+                        )),
                     });
                 }
 
@@ -1806,6 +1960,13 @@ pub async fn run_agent_loop_streaming(
                     cost_usd: None,
                     silent: false,
                     directives: Default::default(),
+                    eval_metrics: Some(build_eval_metrics(
+                        "success",
+                        loop_start,
+                        tool_calls_executed,
+                        tool_calls_errored,
+                        &loop_guard,
+                    )),
                 });
             }
             StopReason::ToolUse => {
@@ -1838,6 +1999,31 @@ pub async fn run_agent_loop_streaming(
                             if let Err(e) = memory.save_session(session) {
                                 warn!("Failed to save session on circuit break: {e}");
                             }
+                            // Emit eval metrics before returning error
+                            let metrics = build_eval_metrics(
+                                "failed",
+                                loop_start,
+                                tool_calls_executed,
+                                tool_calls_errored,
+                                &loop_guard,
+                            );
+                            info!(
+                                eval_outcome = %metrics.outcome,
+                                eval_task_success = metrics.task_success,
+                                eval_time_to_completion_ms = metrics.time_to_completion_ms,
+                                eval_tool_calls_total = metrics.tool_calls_total,
+                                eval_tool_calls_errored = metrics.tool_calls_errored,
+                                eval_tool_calls_blocked = metrics.tool_calls_blocked,
+                                agent = %manifest.name,
+                                agent_id = %agent_id_str,
+                                "Agent eval metrics (circuit_break, streaming)"
+                            );
+                            emit_lifecycle_event(
+                                "runtime.agent_loop.eval",
+                                &manifest.name,
+                                &agent_id_str,
+                                serde_json::to_value(&metrics).unwrap_or_default(),
+                            );
                             // Fire AgentLoopEnd hook on circuit break
                             if let Some(hook_reg) = hooks {
                                 let ctx = crate::hooks::HookContext {
@@ -1997,6 +2183,12 @@ pub async fn run_agent_loop_streaming(
 
                     let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
+                    // Eval metrics: count tool calls
+                    tool_calls_executed += 1;
+                    if result.is_error {
+                        tool_calls_errored += 1;
+                    }
+
                     // Finish the tool span
                     if let Some(sp) = tool_span {
                         sp.finish();
@@ -2113,6 +2305,13 @@ pub async fn run_agent_loop_streaming(
                         cost_usd: None,
                         silent: false,
                         directives: Default::default(),
+                        eval_metrics: Some(build_eval_metrics(
+                            "partial",
+                            loop_start,
+                            tool_calls_executed,
+                            tool_calls_errored,
+                            &loop_guard,
+                        )),
                     });
                 }
                 let text = response.text();
@@ -2142,6 +2341,32 @@ pub async fn run_agent_loop_streaming(
         };
         let _ = hook_reg.fire(&ctx);
     }
+
+    // Emit eval metrics before returning error
+    let metrics = build_eval_metrics(
+        "failed",
+        loop_start,
+        tool_calls_executed,
+        tool_calls_errored,
+        &loop_guard,
+    );
+    info!(
+        eval_outcome = %metrics.outcome,
+        eval_task_success = metrics.task_success,
+        eval_time_to_completion_ms = metrics.time_to_completion_ms,
+        eval_tool_calls_total = metrics.tool_calls_total,
+        eval_tool_calls_errored = metrics.tool_calls_errored,
+        eval_tool_calls_blocked = metrics.tool_calls_blocked,
+        agent = %manifest.name,
+        agent_id = %agent_id_str,
+        "Agent eval metrics (max_iterations_exceeded, streaming)"
+    );
+    emit_lifecycle_event(
+        "runtime.agent_loop.eval",
+        &manifest.name,
+        &agent_id_str,
+        serde_json::to_value(&metrics).unwrap_or_default(),
+    );
 
     emit_lifecycle_event(
         "runtime.agent_loop.failed",
