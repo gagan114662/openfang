@@ -100,6 +100,7 @@ pub struct AgentEvalMetrics {
     pub autonomous_task_yield: bool,
     pub time_to_completion_ms: u64,
     pub cost_per_successful_task: Option<f64>,
+    pub cost_on_failure: Option<f64>,
     pub tool_success_rate: Option<f64>,
     pub stuck_loop_rate: Option<f64>,
     pub human_intervention_rate: f64,
@@ -138,6 +139,7 @@ fn build_eval_metrics(
         autonomous_task_yield,
         time_to_completion_ms: loop_start.elapsed().as_millis() as u64,
         cost_per_successful_task: None, // Kernel populates this after the loop
+        cost_on_failure: None,          // Kernel populates this after the loop
         tool_success_rate,
         stuck_loop_rate,
         human_intervention_rate: 0.0,

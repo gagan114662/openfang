@@ -1723,8 +1723,12 @@ impl OpenFangKernel {
                     // Populate eval metrics with cost and emit
                     let mut result = result;
                     if let Some(ref mut metrics) = result.eval_metrics {
-                        if metrics.task_success && cost > 0.0 {
-                            metrics.cost_per_successful_task = Some(cost);
+                        if cost > 0.0 {
+                            if metrics.task_success {
+                                metrics.cost_per_successful_task = Some(cost);
+                            } else {
+                                metrics.cost_on_failure = Some(cost);
+                            }
                         }
                         info!(
                             eval_outcome = %metrics.outcome,
@@ -1734,6 +1738,7 @@ impl OpenFangKernel {
                             eval_tool_success_rate = ?metrics.tool_success_rate,
                             eval_stuck_loop_rate = ?metrics.stuck_loop_rate,
                             eval_cost_per_successful_task = ?metrics.cost_per_successful_task,
+                            eval_cost_on_failure = ?metrics.cost_on_failure,
                             eval_human_intervention_rate = metrics.human_intervention_rate,
                             eval_tool_calls_total = metrics.tool_calls_total,
                             eval_tool_calls_errored = metrics.tool_calls_errored,
@@ -2257,8 +2262,12 @@ impl OpenFangKernel {
 
         // Populate eval metrics with cost and emit
         if let Some(ref mut metrics) = result.eval_metrics {
-            if metrics.task_success && cost > 0.0 {
-                metrics.cost_per_successful_task = Some(cost);
+            if cost > 0.0 {
+                if metrics.task_success {
+                    metrics.cost_per_successful_task = Some(cost);
+                } else {
+                    metrics.cost_on_failure = Some(cost);
+                }
             }
 
             // Set Sentry span data for eval metrics
@@ -2282,6 +2291,9 @@ impl OpenFangKernel {
                     if let Some(cps) = metrics.cost_per_successful_task {
                         span.set_data("eval.cost_per_successful_task", cps.into());
                     }
+                    if let Some(cof) = metrics.cost_on_failure {
+                        span.set_data("eval.cost_on_failure", cof.into());
+                    }
                 }
             });
 
@@ -2294,6 +2306,7 @@ impl OpenFangKernel {
                 eval_tool_success_rate = ?metrics.tool_success_rate,
                 eval_stuck_loop_rate = ?metrics.stuck_loop_rate,
                 eval_cost_per_successful_task = ?metrics.cost_per_successful_task,
+                eval_cost_on_failure = ?metrics.cost_on_failure,
                 eval_human_intervention_rate = metrics.human_intervention_rate,
                 eval_tool_calls_total = metrics.tool_calls_total,
                 eval_tool_calls_errored = metrics.tool_calls_errored,
