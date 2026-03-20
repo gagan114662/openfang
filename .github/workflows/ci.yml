@@ -75,8 +75,10 @@ jobs:
             test_cmd: cargo test -p openfang-runtime tool -- --skip driver
           - crate: openfang-runtime-session
             test_cmd: cargo test -p openfang-runtime session
-          - crate: openfang-runtime-other
-            test_cmd: cargo test -p openfang-runtime -- --skip driver --skip tool --skip session
+          - crate: openfang-runtime-prompt
+            test_cmd: cargo test -p openfang-runtime prompt
+          - crate: openfang-runtime-misc
+            test_cmd: cargo test -p openfang-runtime -- --skip driver --skip tool --skip session --skip prompt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
