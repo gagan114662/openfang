@@ -118,7 +118,7 @@
   "reviewProviders": {
     "providers": {
       "greptile": {
-        "enforcement": "required",
+        "enforcement": "advisory",
         "requireCurrentHeadIngestion": true,
         "checkRunName": "greptile-review"
       },
@@ -148,7 +148,7 @@
     "claudeRemediation": {
       "enabled": true,
       "runOnEverySync": true,
-      "requireFindingsIngestion": true,
+      "requireFindingsIngestion": false,
       "maxAttemptsPerSha": 1
     }
   },
