@@ -31,9 +31,7 @@ pub fn make_json_appender(
     let _ = std::fs::create_dir_all(&log_dir);
 
     let file_appender = match logging.rotation {
-        LogRotation::Daily => {
-            tracing_appender::rolling::daily(&log_dir, &logging.json_file_prefix)
-        }
+        LogRotation::Daily => tracing_appender::rolling::daily(&log_dir, &logging.json_file_prefix),
         LogRotation::Hourly => {
             tracing_appender::rolling::hourly(&log_dir, &logging.json_file_prefix)
         }

@@ -1678,7 +1678,10 @@ impl std::fmt::Debug for KernelConfig {
                 ),
             )
             .field("ws", &format!("enabled={}", self.ws.enabled))
-            .field("logging", &format!("json_enabled={}", self.logging.json_enabled))
+            .field(
+                "logging",
+                &format!("json_enabled={}", self.logging.json_enabled),
+            )
             .finish()
     }
 }

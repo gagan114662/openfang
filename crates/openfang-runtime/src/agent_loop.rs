@@ -113,7 +113,9 @@ impl Drop for TransactionFinisher {
         sentry::configure_scope(|scope| scope.set_span(None));
         if self.flush_on_drop {
             if let Some(client) = sentry::Hub::current().client() {
-                client.flush(Some(std::time::Duration::from_millis(self.flush_timeout_ms)));
+                client.flush(Some(std::time::Duration::from_millis(
+                    self.flush_timeout_ms,
+                )));
             }
         }
     }
@@ -728,10 +730,8 @@ pub async fn run_agent_loop(
                     // Start Sentry span for this tool call
                     let tool_span = sentry::configure_scope(|scope| {
                         scope.get_span().map(|parent| {
-                            let child = parent.start_child(
-                                "tool.execution",
-                                &format!("tool:{}", tool_call.name),
-                            );
+                            let child = parent
+                                .start_child("tool.execution", &format!("tool:{}", tool_call.name));
                             child.set_data("tool_name", tool_call.name.clone().into());
                             child.set_data("tool_call_id", tool_call.id.clone().into());
                             child
@@ -817,7 +817,11 @@ pub async fn run_agent_loop(
                     }
 
                     emit_lifecycle_event(
-                        if result.is_error { "runtime.tool_call.failed" } else { "runtime.tool_call.completed" },
+                        if result.is_error {
+                            "runtime.tool_call.failed"
+                        } else {
+                            "runtime.tool_call.completed"
+                        },
                         &manifest.name,
                         &agent_id_str,
                         serde_json::json!({
@@ -1912,10 +1916,8 @@ pub async fn run_agent_loop_streaming(
                     // Start Sentry span for this tool call (streaming)
                     let tool_span = sentry::configure_scope(|scope| {
                         scope.get_span().map(|parent| {
-                            let child = parent.start_child(
-                                "tool.execution",
-                                &format!("tool:{}", tool_call.name),
-                            );
+                            let child = parent
+                                .start_child("tool.execution", &format!("tool:{}", tool_call.name));
                             child.set_data("tool_name", tool_call.name.clone().into());
                             child.set_data("tool_call_id", tool_call.id.clone().into());
                             child
@@ -2001,7 +2003,11 @@ pub async fn run_agent_loop_streaming(
                     }
 
                     emit_lifecycle_event(
-                        if result.is_error { "runtime.tool_call.failed" } else { "runtime.tool_call.completed" },
+                        if result.is_error {
+                            "runtime.tool_call.failed"
+                        } else {
+                            "runtime.tool_call.completed"
+                        },
                         &manifest.name,
                         &agent_id_str,
                         serde_json::json!({
