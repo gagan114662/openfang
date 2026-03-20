@@ -45,15 +45,34 @@ jobs:
       - run: cargo check --workspace
 
   ci-test:
-    name: ci-test
+    name: ci-test (${{ matrix.crate }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - openfang-api
+          - openfang-channels
+          - openfang-cli
+          - openfang-desktop
+          - openfang-extensions
+          - openfang-hands
+          - openfang-kernel
+          - openfang-memory
+          - openfang-migrate
+          - openfang-runtime
+          - openfang-skills
+          - openfang-telegram
+          - openfang-types
+          - openfang-wire
+          - xtask
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ci-test
+          key: ci-test-${{ matrix.crate }}
       - name: Install Tauri system deps
         run: |
           sudo apt-get update
@@ -63,7 +82,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-      - run: cargo test --workspace
+      - run: cargo test -p ${{ matrix.crate }}
 
   ci-clippy:
     name: ci-clippy
