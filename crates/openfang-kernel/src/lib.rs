@@ -14,6 +14,7 @@ pub mod cron;
 pub mod error;
 pub mod event_bus;
 pub mod heartbeat;
+pub mod json_logging;
 pub mod kernel;
 pub mod metering;
 pub mod pairing;

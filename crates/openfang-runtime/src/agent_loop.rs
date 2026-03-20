@@ -179,7 +179,7 @@ pub async fn run_agent_loop(
     context_window_tokens: Option<usize>,
     process_manager: Option<&crate::process_manager::ProcessManager>,
 ) -> OpenFangResult<AgentLoopResult> {
-    info!(agent = %manifest.name, "Starting agent loop");
+    info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting agent loop");
 
     // Start Sentry transaction for performance monitoring
     let transaction = sentry::start_transaction(sentry::TransactionContext::new(
@@ -368,7 +368,7 @@ pub async fn run_agent_loop(
     let context_budget = ContextBudget::new(ctx_window);
 
     for iteration in 0..max_iterations {
-        debug!(iteration, "Agent loop iteration");
+        debug!(iteration, agent_id = %agent_id_str, agent_name = %manifest.name, step = iteration, "Agent loop iteration");
 
         // Context overflow recovery pipeline (replaces emergency_trim_messages)
         let recovery =
@@ -578,6 +578,8 @@ pub async fn run_agent_loop(
 
                 info!(
                     agent = %manifest.name,
+                    agent_id = %agent_id_str,
+                    step = iteration + 1,
                     iterations = iteration + 1,
                     tokens = total_usage.total(),
                     "Agent loop completed"
@@ -681,7 +683,7 @@ pub async fn run_agent_loop(
                         _ => {} // Allow or Warn — proceed with execution
                     }
 
-                    debug!(tool = %tool_call.name, id = %tool_call.id, "Executing tool");
+                    debug!(tool = %tool_call.name, id = %tool_call.id, agent_id = %agent_id_str, step = iteration, "Executing tool");
 
                     // Notify phase: ToolUse
                     if let Some(cb) = on_phase {
@@ -888,6 +890,8 @@ pub async fn run_agent_loop(
                     warn!(
                         iteration,
                         consecutive_max_tokens,
+                        agent_id = %agent_id_str,
+                        step = iteration,
                         "Max continuations reached, returning partial response"
                     );
                     // Fire AgentLoopEnd hook
@@ -932,7 +936,7 @@ pub async fn run_agent_loop(
 
     // Save session before failing so conversation history is preserved
     if let Err(e) = memory.save_session(session) {
-        warn!("Failed to save session on max iterations: {e}");
+        warn!(agent_id = %agent_id_str, "Failed to save session on max iterations: {e}");
     }
 
     // Fire AgentLoopEnd hook on max iterations exceeded
@@ -1351,7 +1355,7 @@ pub async fn run_agent_loop_streaming(
     context_window_tokens: Option<usize>,
     process_manager: Option<&crate::process_manager::ProcessManager>,
 ) -> OpenFangResult<AgentLoopResult> {
-    info!(agent = %manifest.name, "Starting streaming agent loop");
+    info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting streaming agent loop");
 
     // Start Sentry transaction for performance monitoring (streaming variant)
     let transaction = sentry::start_transaction(sentry::TransactionContext::new(
@@ -1537,7 +1541,7 @@ pub async fn run_agent_loop_streaming(
     let context_budget = ContextBudget::new(ctx_window);
 
     for iteration in 0..max_iterations {
-        debug!(iteration, "Streaming agent loop iteration");
+        debug!(iteration, agent_id = %agent_id_str, agent_name = %manifest.name, step = iteration, "Streaming agent loop iteration");
 
         // Context overflow recovery pipeline (replaces emergency_trim_messages)
         let recovery =
@@ -1764,6 +1768,8 @@ pub async fn run_agent_loop_streaming(
 
                 info!(
                     agent = %manifest.name,
+                    agent_id = %agent_id_str,
+                    step = iteration + 1,
                     iterations = iteration + 1,
                     tokens = total_usage.total(),
                     "Streaming agent loop completed"
@@ -1861,7 +1867,7 @@ pub async fn run_agent_loop_streaming(
                         _ => {} // Allow or Warn — proceed with execution
                     }
 
-                    debug!(tool = %tool_call.name, id = %tool_call.id, "Executing tool (streaming)");
+                    debug!(tool = %tool_call.name, id = %tool_call.id, agent_id = %agent_id_str, step = iteration, "Executing tool (streaming)");
 
                     // Notify phase: ToolUse
                     if let Some(cb) = on_phase {

@@ -705,25 +705,49 @@ enum SystemCommands {
     },
 }
 
-fn init_tracing_stderr() {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let sentry_layer = sentry_tracing::layer()
-        .enable_span_attributes()
-        .event_filter(|metadata| match metadata.level() {
-            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
-            _ => sentry_tracing::EventFilter::Event,
-        });
-
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(sentry_layer)
-        .init();
+fn init_tracing_stderr(logging: &openfang_types::config::LoggingConfig) {
+    if logging.json_enabled {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let sentry_layer = sentry_tracing::layer()
+            .enable_span_attributes()
+            .event_filter(|metadata| match metadata.level() {
+                &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                _ => sentry_tracing::EventFilter::Event,
+            });
+        let (json_writer, guard) = openfang_kernel::json_logging::make_json_appender(logging);
+        std::mem::forget(guard);
+        let json_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(json_writer)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_span_list(true);
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(json_layer)
+            .with(sentry_layer)
+            .init();
+    } else {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let sentry_layer = sentry_tracing::layer()
+            .enable_span_attributes()
+            .event_filter(|metadata| match metadata.level() {
+                &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                _ => sentry_tracing::EventFilter::Event,
+            });
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(sentry_layer)
+            .init();
+    }
 }
 
 /// Redirect tracing to a log file so it doesn't corrupt the ratatui TUI.
-fn init_tracing_file() {
+fn init_tracing_file(logging: &openfang_types::config::LoggingConfig) {
     let log_dir = dirs::home_dir()
         .map(|h| h.join(".openfang"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
@@ -732,24 +756,53 @@ fn init_tracing_file() {
 
     match std::fs::File::create(&log_path) {
         Ok(file) => {
-            let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-            let sentry_layer = sentry_tracing::layer()
-                .enable_span_attributes()
-                .event_filter(|metadata| match metadata.level() {
-                    &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
-                    _ => sentry_tracing::EventFilter::Event,
-                });
-
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(std::sync::Mutex::new(file))
-                        .with_ansi(false),
-                )
-                .with(sentry_layer)
-                .init();
+            if logging.json_enabled {
+                let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+                let sentry_layer = sentry_tracing::layer()
+                    .enable_span_attributes()
+                    .event_filter(|metadata| match metadata.level() {
+                        &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                        _ => sentry_tracing::EventFilter::Event,
+                    });
+                let (json_writer, guard) =
+                    openfang_kernel::json_logging::make_json_appender(logging);
+                std::mem::forget(guard);
+                let json_layer = tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(json_writer)
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_span_list(true);
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_writer(std::sync::Mutex::new(file))
+                            .with_ansi(false),
+                    )
+                    .with(json_layer)
+                    .with(sentry_layer)
+                    .init();
+            } else {
+                let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+                let sentry_layer = sentry_tracing::layer()
+                    .enable_span_attributes()
+                    .event_filter(|metadata| match metadata.level() {
+                        &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
+                        _ => sentry_tracing::EventFilter::Event,
+                    });
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_writer(std::sync::Mutex::new(file))
+                            .with_ansi(false),
+                    )
+                    .with(sentry_layer)
+                    .init();
+            }
         }
         Err(_) => {
             // Fallback: suppress all output rather than corrupt the TUI
@@ -775,6 +828,10 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // Early config read for logging configuration (needed before tracing init)
+    let early_config = openfang_kernel::config::load_config(cli.config.as_deref());
+    let logging_config = early_config.logging.clone();
+
     // Determine if this invocation launches a ratatui TUI.
     // TUI modes must NOT install the Ctrl+C handler (it calls process::exit
     // which bypasses ratatui::restore and leaves the terminal in raw mode).
@@ -789,12 +846,12 @@ fn main() {
         );
 
     if is_tui_mode {
-        init_tracing_file();
+        init_tracing_file(&logging_config);
     } else {
         // CLI subcommands: install Ctrl+C handler for clean interrupt of
         // blocking read_line calls, and trace to stderr.
         install_ctrlc_handler();
-        init_tracing_stderr();
+        init_tracing_stderr(&logging_config);
     }
 
     match cli.command {

@@ -1087,6 +1087,44 @@ impl Default for RlmConfig {
     }
 }
 
+/// Log file rotation strategy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogRotation {
+    #[default]
+    Daily,
+    Hourly,
+    Never,
+}
+
+/// Structured JSON logging configuration (Loki/Promtail preparation).
+///
+/// When enabled, produces JSON log files suitable for ingestion by
+/// Promtail, Grafana Alloy, or any log shipper that understands JSON lines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    /// Enable JSON log output to file.
+    pub json_enabled: bool,
+    /// Directory for JSON log files (default: `~/.openfang/logs`).
+    pub json_dir: Option<String>,
+    /// File name prefix (produces `<prefix>.YYYY-MM-DD.log` with daily rotation).
+    pub json_file_prefix: String,
+    /// Rotation strategy: `daily`, `hourly`, or `never`.
+    pub rotation: LogRotation,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            json_enabled: false,
+            json_dir: None,
+            json_file_prefix: "openfang".to_string(),
+            rotation: LogRotation::default(),
+        }
+    }
+}
+
 /// Sentry AI Monitoring configuration.
 ///
 /// Enables real-time visibility into LLM failures, performance bottlenecks,
@@ -1385,6 +1423,9 @@ pub struct KernelConfig {
     /// WebSocket v1 multiplexed transport configuration.
     #[serde(default)]
     pub ws: WsConfig,
+    /// Structured JSON logging configuration (Loki/Promtail preparation).
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 /// Global spending budget configuration.
@@ -1535,6 +1576,7 @@ impl Default for KernelConfig {
             rlm: RlmConfig::default(),
             sentry: SentryConfig::default(),
             ws: WsConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -1636,6 +1678,7 @@ impl std::fmt::Debug for KernelConfig {
                 ),
             )
             .field("ws", &format!("enabled={}", self.ws.enabled))
+            .field("logging", &format!("json_enabled={}", self.logging.json_enabled))
             .finish()
     }
 }
@@ -3638,6 +3681,18 @@ mod tests {
         let config = KernelConfig::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("log_level"));
+    }
+
+    #[test]
+    fn test_logging_config_defaults() {
+        let config = LoggingConfig::default();
+        assert!(!config.json_enabled);
+        assert_eq!(config.json_file_prefix, "openfang");
+        assert_eq!(config.rotation, LogRotation::Daily);
+        assert!(config.json_dir.is_none());
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: LoggingConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.rotation, config.rotation);
     }
 
     #[test]

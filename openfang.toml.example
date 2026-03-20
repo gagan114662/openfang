@@ -81,6 +81,13 @@ realtime_log_flush_timeout_ms = 1500     # Flush timeout in milliseconds
 # region = "us-west-2"
 # deployment = "kubernetes"
 
+# Structured JSON logging (Loki/Promtail preparation)
+[logging]
+json_enabled = false                    # Enable JSON log output to file
+# json_dir = "~/.openfang/logs"        # Log directory (default: ~/.openfang/logs)
+json_file_prefix = "openfang"           # File prefix (produces openfang.YYYY-MM-DD.log)
+rotation = "daily"                      # "daily", "hourly", or "never"
+
 # Channel adapters (configure tokens via environment variables)
 # Telegram bidirectional integration
 [channels.telegram]
