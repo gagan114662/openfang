@@ -67,14 +67,16 @@ jobs:
           - openfang-wire
           - xtask
         include:
-          # Split openfang-runtime (649 tests) into 3 shards to stay
+          # Split openfang-runtime (649 tests) into 4 shards to stay
           # within GitHub free-runner resource limits.
           - crate: openfang-runtime-drivers
             test_cmd: cargo test -p openfang-runtime driver
           - crate: openfang-runtime-tools
             test_cmd: cargo test -p openfang-runtime tool -- --skip driver
-          - crate: openfang-runtime-rest
-            test_cmd: cargo test -p openfang-runtime -- --skip driver --skip tool --test-threads=1
+          - crate: openfang-runtime-session
+            test_cmd: cargo test -p openfang-runtime session
+          - crate: openfang-runtime-other
+            test_cmd: cargo test -p openfang-runtime -- --skip driver --skip tool --skip session
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
