@@ -8766,6 +8766,56 @@ pub async fn list_commands(State(state): State<Arc<AppState>>) -> impl IntoRespo
     Json(serde_json::json!({"commands": commands}))
 }
 
+/// POST /api/telemetry/structured — Ingest a structured telemetry event into Sentry.
+pub async fn telemetry_structured(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let body = payload
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no body)")
+        .to_string();
+
+    let level_str = payload
+        .get("level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("info");
+
+    let level = match level_str {
+        "error" | "fatal" => sentry::Level::Error,
+        "warn" | "warning" => sentry::Level::Warning,
+        "debug" => sentry::Level::Debug,
+        _ => sentry::Level::Info,
+    };
+
+    let attributes: std::collections::BTreeMap<String, serde_json::Value> =
+        if let Some(attrs) = payload.get("attributes") {
+            crate::sentry_logs::flatten_with_prefix("", attrs)
+        } else {
+            std::collections::BTreeMap::new()
+        };
+
+    let guarded = crate::sentry_logs::capture_structured_log(level, &body, attributes);
+
+    if state.kernel.config.sentry.realtime_log_flush {
+        let timeout_ms = state.kernel.config.sentry.realtime_log_flush_timeout_ms;
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_millis(timeout_ms)));
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "accepted",
+            "serialized_bytes": guarded.serialized_bytes,
+            "truncated_fields": guarded.truncated_fields.len(),
+            "dropped_fields": guarded.dropped_fields,
+        })),
+    )
+}
+
 /// SECURITY: Validate webhook bearer token using constant-time comparison.
 fn validate_webhook_token(headers: &axum::http::HeaderMap, token_env: &str) -> bool {
     let expected = match std::env::var(token_env) {

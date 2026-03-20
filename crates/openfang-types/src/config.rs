@@ -1123,6 +1123,46 @@ pub struct SentryConfig {
     /// Custom tags to add to all Sentry events.
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
+
+    /// Sentry API auth token (for API queries).
+    #[serde(default)]
+    pub auth_token: Option<String>,
+
+    /// Environment variable name holding the Sentry auth token.
+    #[serde(default)]
+    pub auth_token_env: Option<String>,
+
+    /// Event sample rate (0.0 to 1.0). 1.0 = capture all events.
+    #[serde(default = "default_sentry_sample_rate")]
+    pub sample_rate: f32,
+
+    /// Profiling sample rate (0.0 to 1.0). 0.0 = disabled.
+    #[serde(default)]
+    pub profiles_sample_rate: f32,
+
+    /// Flush Sentry events immediately after transactions complete.
+    #[serde(default)]
+    pub realtime_log_flush: bool,
+
+    /// Timeout in ms for realtime flush operations.
+    #[serde(default = "default_flush_timeout_ms")]
+    pub realtime_log_flush_timeout_ms: u64,
+
+    /// Sentry organization slug (for API queries).
+    #[serde(default)]
+    pub org_slug: Option<String>,
+
+    /// Sentry project slug (for API queries).
+    #[serde(default)]
+    pub project_slug: Option<String>,
+
+    /// Sentry API base URL.
+    #[serde(default = "default_sentry_api_base_url")]
+    pub api_base_url: String,
+
+    /// Sentry API timeout in seconds.
+    #[serde(default = "default_sentry_api_timeout_secs")]
+    pub api_timeout_secs: u64,
 }
 
 fn default_sentry_environment() -> String {
@@ -1137,6 +1177,18 @@ fn default_sentry_sample_rate() -> f32 {
     1.0 // 100% sampling in dev
 }
 
+fn default_flush_timeout_ms() -> u64 {
+    1500
+}
+
+fn default_sentry_api_base_url() -> String {
+    "https://sentry.io".to_string()
+}
+
+fn default_sentry_api_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for SentryConfig {
     fn default() -> Self {
         Self {
@@ -1147,6 +1199,16 @@ impl Default for SentryConfig {
             performance_monitoring: true,
             error_tracking: true,
             tags: std::collections::HashMap::new(),
+            auth_token: None,
+            auth_token_env: None,
+            sample_rate: default_sentry_sample_rate(),
+            profiles_sample_rate: 0.0,
+            realtime_log_flush: false,
+            realtime_log_flush_timeout_ms: default_flush_timeout_ms(),
+            org_slug: None,
+            project_slug: None,
+            api_base_url: default_sentry_api_base_url(),
+            api_timeout_secs: default_sentry_api_timeout_secs(),
         }
     }
 }

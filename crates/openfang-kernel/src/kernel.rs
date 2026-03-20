@@ -520,6 +520,7 @@ impl OpenFangKernel {
                 release: Some(sentry_release().into()),
                 environment: Some(config.sentry.environment.clone().into()),
                 traces_sample_rate: config.sentry.traces_sample_rate,
+                sample_rate: config.sentry.sample_rate,
                 send_default_pii: config.sentry.include_prompts,
                 attach_stacktrace: true,
                 ..Default::default()
