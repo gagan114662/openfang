@@ -84,11 +84,15 @@ impl Conn {
 
 impl Drop for Conn {
     fn drop(&mut self) {
-        let mut counter = IP_COUNTERS.entry(self.ip).or_insert(0);
-        *counter = counter.saturating_sub(1);
-        if *counter == 0 {
-            drop(counter);
-            IP_COUNTERS.remove(&self.ip);
+        // Atomic decrement-and-remove: the Entry holds the shard lock for the
+        // entire operation, preventing a concurrent insert between decrement and removal.
+        if let dashmap::mapref::entry::Entry::Occupied(mut entry) = IP_COUNTERS.entry(self.ip) {
+            let new_val = entry.get().saturating_sub(1);
+            if new_val == 0 {
+                entry.remove();
+            } else {
+                *entry.get_mut() = new_val;
+            }
         }
     }
 }
@@ -199,6 +203,7 @@ async fn handle_ws(socket: WebSocket, ip: IpAddr, state: Arc<AppState>) {
         let ping_every = Duration::from_millis(hb_conn.ws_cfg.ping_interval_ms);
         let idle = Duration::from_millis(hb_conn.ws_cfg.idle_timeout_ms);
         let mut last_activity = Instant::now();
+        let mut last_seen_frames: u64 = 0;
         loop {
             tokio::time::sleep(ping_every).await;
             if hb_conn.closing.load(Ordering::Relaxed) {
@@ -221,8 +226,10 @@ async fn handle_ws(socket: WebSocket, ip: IpAddr, state: Arc<AppState>) {
                     payload: serde_json::Value::Null,
                 })
                 .await;
-            // Update activity on any incoming frame count change.
-            if hb_conn.frames_in.load(Ordering::Relaxed) > 0 {
+            // Reset activity timer only when NEW frames have arrived since last check.
+            let current_frames = hb_conn.frames_in.load(Ordering::Relaxed);
+            if current_frames > last_seen_frames {
+                last_seen_frames = current_frames;
                 last_activity = Instant::now();
             }
         }
