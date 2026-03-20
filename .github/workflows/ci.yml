@@ -61,24 +61,12 @@ jobs:
           - openfang-kernel
           - openfang-memory
           - openfang-migrate
+          - openfang-runtime
           - openfang-skills
           - openfang-telegram
           - openfang-types
           - openfang-wire
           - xtask
-        include:
-          # Split openfang-runtime (649 tests) into 4 shards to stay
-          # within GitHub free-runner resource limits.
-          - crate: openfang-runtime-drivers
-            test_cmd: cargo test -p openfang-runtime driver
-          - crate: openfang-runtime-tools
-            test_cmd: cargo test -p openfang-runtime tool -- --skip driver
-          - crate: openfang-runtime-session
-            test_cmd: cargo test -p openfang-runtime session
-          - crate: openfang-runtime-prompt
-            test_cmd: cargo test -p openfang-runtime prompt
-          - crate: openfang-runtime-misc
-            test_cmd: cargo test -p openfang-runtime -- --skip driver --skip tool --skip session --skip prompt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -94,7 +82,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-      - run: ${{ matrix.test_cmd || format('cargo test -p {0}', matrix.crate) }}
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - run: cargo nextest run -p ${{ matrix.crate }}
 
   ci-clippy:
     name: ci-clippy
