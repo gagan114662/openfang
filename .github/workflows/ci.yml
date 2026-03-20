@@ -55,7 +55,6 @@ jobs:
           - openfang-api
           - openfang-channels
           - openfang-cli
-          - openfang-desktop
           - openfang-extensions
           - openfang-hands
           - openfang-kernel
@@ -66,7 +65,6 @@ jobs:
           - openfang-telegram
           - openfang-types
           - openfang-wire
-          - xtask
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
