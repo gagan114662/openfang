@@ -279,6 +279,23 @@ pub trait ChannelBridgeHandle: Send + Sync {
     }
 }
 
+/// Guard that finishes a Sentry transaction on drop and flushes the client.
+struct ChannelTransactionGuard {
+    transaction: sentry::TransactionOrSpan,
+}
+
+impl Drop for ChannelTransactionGuard {
+    fn drop(&mut self) {
+        if let sentry::TransactionOrSpan::Transaction(ref tx) = self.transaction {
+            tx.clone().finish();
+        }
+        sentry::configure_scope(|scope| scope.set_span(None));
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_millis(500)));
+        }
+    }
+}
+
 /// Per-channel rate limiter tracking message timestamps per user.
 ///
 /// Key: `"{channel_type}:{platform_id}"`, Value: timestamps of recent messages.
@@ -356,7 +373,9 @@ impl BridgeManager {
         let adapter_clone = adapter.clone();
         let mut shutdown = self.shutdown_rx.clone();
 
+        let hub = sentry::Hub::new_from_top(sentry::Hub::current());
         let task = tokio::spawn(async move {
+            let _sentry_guard = hub.push_scope();
             let mut stream = std::pin::pin!(stream);
             loop {
                 tokio::select! {
@@ -451,6 +470,23 @@ async fn dispatch_message(
     rate_limiter: &ChannelRateLimiter,
 ) {
     let ct_str = channel_type_str(&message.channel);
+
+    // Start a Sentry transaction for channel message dispatch
+    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+        &format!("channel.dispatch.{}", ct_str),
+        "channel.message",
+    ));
+    transaction.set_data("channel", serde_json::Value::String(ct_str.to_string()));
+    transaction.set_data(
+        "sender",
+        serde_json::Value::String(message.sender.display_name.clone()),
+    );
+    sentry::configure_scope(|scope| {
+        scope.set_span(Some(transaction.clone().into()));
+    });
+    let _tx_guard = ChannelTransactionGuard {
+        transaction: transaction.into(),
+    };
 
     // Fetch per-channel overrides (if configured)
     let overrides = handle.channel_overrides(ct_str).await;
@@ -655,7 +691,9 @@ async fn dispatch_message(
                             let t = text.clone();
                             let aid = *aid;
                             let name = name.clone();
+                            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                             handles_vec.push(tokio::spawn(async move {
+                                let _guard = hub.push_scope();
                                 let result = h.send_message(aid, &t).await;
                                 (name, aid, result)
                             }));

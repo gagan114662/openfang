@@ -1162,43 +1162,40 @@ pub struct SentryConfig {
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
 
-    /// Sentry API auth token (for API queries).
-    #[serde(default)]
-    pub auth_token: Option<String>,
-
-    /// Environment variable name holding the Sentry auth token.
-    #[serde(default)]
-    pub auth_token_env: Option<String>,
-
-    /// Event sample rate (0.0 to 1.0). 1.0 = capture all events.
+    /// Sample rate for error events (0.0 to 1.0). Controls what fraction of
+    /// errors are sent to Sentry. Default 1.0 = send all errors.
     #[serde(default = "default_sentry_sample_rate")]
     pub sample_rate: f32,
 
-    /// Profiling sample rate (0.0 to 1.0). 0.0 = disabled.
+    /// Sample rate for profiling (0.0 to 1.0). Default 0.0 = disabled.
     #[serde(default)]
     pub profiles_sample_rate: f32,
 
-    /// Flush Sentry events immediately after transactions complete.
+    /// Whether to flush Sentry events in real-time (vs batching).
     #[serde(default)]
     pub realtime_log_flush: bool,
 
-    /// Timeout in ms for realtime flush operations.
-    #[serde(default = "default_flush_timeout_ms")]
+    /// Timeout in milliseconds for the Sentry flush on shutdown.
+    #[serde(default = "default_sentry_flush_timeout_ms")]
     pub realtime_log_flush_timeout_ms: u64,
 
-    /// Sentry organization slug (for API queries).
+    /// Sentry auth token (for sentry_live_summary.py and API access).
+    #[serde(default)]
+    pub auth_token: Option<String>,
+
+    /// Sentry organization slug (for sentry_live_summary.py).
     #[serde(default)]
     pub org_slug: Option<String>,
 
-    /// Sentry project slug (for API queries).
+    /// Sentry project slug (for sentry_live_summary.py).
     #[serde(default)]
     pub project_slug: Option<String>,
 
-    /// Sentry API base URL.
-    #[serde(default = "default_sentry_api_base_url")]
-    pub api_base_url: String,
+    /// Sentry API base URL (for sentry_live_summary.py).
+    #[serde(default)]
+    pub api_base_url: Option<String>,
 
-    /// Sentry API timeout in seconds.
+    /// Timeout in seconds for Sentry API requests.
     #[serde(default = "default_sentry_api_timeout_secs")]
     pub api_timeout_secs: u64,
 }
@@ -1215,12 +1212,8 @@ fn default_sentry_sample_rate() -> f32 {
     1.0 // 100% sampling in dev
 }
 
-fn default_flush_timeout_ms() -> u64 {
-    1500
-}
-
-fn default_sentry_api_base_url() -> String {
-    "https://sentry.io".to_string()
+fn default_sentry_flush_timeout_ms() -> u64 {
+    2000
 }
 
 fn default_sentry_api_timeout_secs() -> u64 {
@@ -1238,14 +1231,13 @@ impl Default for SentryConfig {
             error_tracking: true,
             tags: std::collections::HashMap::new(),
             auth_token: None,
-            auth_token_env: None,
             sample_rate: default_sentry_sample_rate(),
             profiles_sample_rate: 0.0,
             realtime_log_flush: false,
-            realtime_log_flush_timeout_ms: default_flush_timeout_ms(),
+            realtime_log_flush_timeout_ms: default_sentry_flush_timeout_ms(),
             org_slug: None,
             project_slug: None,
-            api_base_url: default_sentry_api_base_url(),
+            api_base_url: None,
             api_timeout_secs: default_sentry_api_timeout_secs(),
         }
     }

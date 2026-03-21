@@ -152,17 +152,11 @@ fn build_eval_metrics(
 
 struct TransactionFinisher {
     transaction: sentry::TransactionOrSpan,
-    flush_on_drop: bool,
-    flush_timeout_ms: u64,
 }
 
 impl TransactionFinisher {
     fn new(transaction: sentry::TransactionOrSpan) -> Self {
-        Self {
-            transaction,
-            flush_on_drop: true,
-            flush_timeout_ms: 500,
-        }
+        Self { transaction }
     }
 }
 
@@ -170,12 +164,9 @@ impl Drop for TransactionFinisher {
     fn drop(&mut self) {
         self.transaction.clone().finish();
         sentry::configure_scope(|scope| scope.set_span(None));
-        if self.flush_on_drop {
-            if let Some(client) = sentry::Hub::current().client() {
-                client.flush(Some(std::time::Duration::from_millis(
-                    self.flush_timeout_ms,
-                )));
-            }
+        // Flush immediately so the transaction is sent to Sentry without delay
+        if let Some(client) = sentry::Hub::current().client() {
+            client.flush(Some(std::time::Duration::from_millis(500)));
         }
     }
 }
@@ -448,9 +439,6 @@ pub async fn run_agent_loop(
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
 
-        let parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
-            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
-
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
             messages: messages.clone(),
@@ -459,7 +447,7 @@ pub async fn run_agent_loop(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
-            sentry_parent_span: parent_span,
+            sentry_parent_span: Some(std::sync::Arc::new(transaction.clone().into())),
         };
 
         // Notify phase: Thinking
@@ -1368,6 +1356,7 @@ async fn call_with_retry(
 /// Call an LLM driver in streaming mode with automatic retry on rate-limit and overload errors.
 ///
 /// Uses the `llm_errors` classifier and `ProviderCooldown` circuit breaker.
+/// Mirrors `call_with_retry` Sentry instrumentation: child span, breadcrumbs, error capture.
 async fn stream_with_retry(
     driver: &dyn LlmDriver,
     request: CompletionRequest,
@@ -1375,6 +1364,25 @@ async fn stream_with_retry(
     provider: Option<&str>,
     cooldown: Option<&ProviderCooldown>,
 ) -> OpenFangResult<crate::llm_driver::CompletionResponse> {
+    // Start Sentry span for this streaming LLM call
+    let span = sentry::configure_scope(|scope| {
+        scope.get_span().map(|parent| {
+            let child =
+                parent.start_child("llm.completion.stream", "LLM streaming API call with retry");
+
+            if let Some(p) = provider {
+                child.set_data("provider", p.to_string().into());
+            }
+            child.set_data("model", request.model.clone().into());
+            child.set_data("max_tokens", request.max_tokens.into());
+            child.set_data("temperature", f64::from(request.temperature).into());
+            child.set_data("message_count", request.messages.len().into());
+            child.set_data("tool_count", request.tools.len().into());
+
+            child
+        })
+    });
+
     // Check circuit breaker before calling
     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
         match cooldown.check(provider) {
@@ -1382,6 +1390,17 @@ async fn stream_with_retry(
                 reason,
                 retry_after_secs,
             } => {
+                if let Some(sp) = span {
+                    sp.set_data("circuit_breaker", "blocked".into());
+                    sp.set_data("retry_after_secs", retry_after_secs.into());
+                    sp.set_status(sentry::protocol::SpanStatus::FailedPrecondition);
+                    sp.finish();
+                }
+                sentry::add_breadcrumb(sentry::Breadcrumb {
+                    message: Some(format!("Circuit breaker blocked (stream): {reason}")),
+                    level: sentry::Level::Warning,
+                    ..Default::default()
+                });
                 return Err(OpenFangError::LlmDriver(format!(
                     "Provider '{provider}' is in cooldown ({reason}). Retry in {retry_after_secs}s."
                 )));
@@ -1391,6 +1410,11 @@ async fn stream_with_retry(
                     provider,
                     "Allowing probe request through circuit breaker (stream)"
                 );
+                sentry::add_breadcrumb(sentry::Breadcrumb {
+                    message: Some("Circuit breaker allowing probe (stream)".to_string()),
+                    level: sentry::Level::Info,
+                    ..Default::default()
+                });
             }
             CooldownVerdict::Allow => {}
         }
@@ -1399,15 +1423,67 @@ async fn stream_with_retry(
     let mut last_error = None;
 
     for attempt in 0..=MAX_RETRIES {
+        // Add breadcrumb for each attempt
+        sentry::add_breadcrumb(sentry::Breadcrumb {
+            message: Some(format!(
+                "LLM stream call attempt {}/{}",
+                attempt + 1,
+                MAX_RETRIES + 1
+            )),
+            level: sentry::Level::Info,
+            ..Default::default()
+        });
+
+        let start = std::time::Instant::now();
         match driver.stream(request.clone(), tx.clone()).await {
             Ok(response) => {
+                let duration = start.elapsed();
+
+                // SUCCESS - Record metrics to Sentry
+                if let Some(sp) = span {
+                    sp.set_data("attempt", (attempt + 1).into());
+                    sp.set_data("input_tokens", response.usage.input_tokens.into());
+                    sp.set_data("output_tokens", response.usage.output_tokens.into());
+                    sp.set_data(
+                        "total_tokens",
+                        (response.usage.input_tokens + response.usage.output_tokens).into(),
+                    );
+                    sp.set_data("duration_ms", (duration.as_millis() as u64).into());
+                    sp.set_data("stop_reason", format!("{:?}", response.stop_reason).into());
+                    sp.set_status(sentry::protocol::SpanStatus::Ok);
+                    sp.finish();
+                }
+
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_success(provider);
                 }
                 return Ok(response);
             }
             Err(LlmError::RateLimited { retry_after_ms }) => {
+                sentry::add_breadcrumb(sentry::Breadcrumb {
+                    message: Some(format!(
+                        "Rate limit hit (stream, attempt {}/{}), retry after {}ms",
+                        attempt + 1,
+                        MAX_RETRIES + 1,
+                        retry_after_ms
+                    )),
+                    level: sentry::Level::Warning,
+                    ..Default::default()
+                });
+
                 if attempt == MAX_RETRIES {
+                    if let Some(sp) = span {
+                        sp.set_data("error_category", "rate_limit".into());
+                        sp.set_data("attempt", (attempt + 1).into());
+                        sp.set_data("retry_after_ms", retry_after_ms.into());
+                        sp.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
+                        sp.finish();
+                    }
+                    sentry::capture_message(
+                        &format!("Rate limited (stream) after {} retries", MAX_RETRIES),
+                        sentry::Level::Error,
+                    );
+
                     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                         cooldown.record_failure(provider, false);
                     }
@@ -1426,7 +1502,25 @@ async fn stream_with_retry(
                 last_error = Some("Rate limited".to_string());
             }
             Err(LlmError::Overloaded { retry_after_ms }) => {
+                sentry::add_breadcrumb(sentry::Breadcrumb {
+                    message: Some(format!(
+                        "Model overloaded (stream, attempt {}/{}), retry after {}ms",
+                        attempt + 1,
+                        MAX_RETRIES + 1,
+                        retry_after_ms
+                    )),
+                    level: sentry::Level::Warning,
+                    ..Default::default()
+                });
+
                 if attempt == MAX_RETRIES {
+                    if let Some(sp) = span {
+                        sp.set_data("error_category", "overloaded".into());
+                        sp.set_data("attempt", (attempt + 1).into());
+                        sp.set_status(sentry::protocol::SpanStatus::ResourceExhausted);
+                        sp.finish();
+                    }
+
                     if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                         cooldown.record_failure(provider, false);
                     }
@@ -1455,6 +1549,62 @@ async fn stream_with_retry(
                     classified.sanitized_message
                 );
 
+                // Report error to Sentry with classification metadata
+                sentry::add_breadcrumb(sentry::Breadcrumb {
+                    message: Some(format!(
+                        "LLM stream error: {:?} (retryable: {}, billing: {})",
+                        classified.category, classified.is_retryable, classified.is_billing
+                    )),
+                    level: sentry::Level::Error,
+                    ..Default::default()
+                });
+
+                if let Some(sp) = span {
+                    sp.set_data(
+                        "error_category",
+                        format!("{:?}", classified.category).into(),
+                    );
+                    sp.set_data("error_retryable", classified.is_retryable.into());
+                    sp.set_data("error_billing", classified.is_billing.into());
+                    sp.set_data("attempt", (attempt + 1).into());
+                    sp.set_status(match classified.category {
+                        llm_errors::LlmErrorCategory::RateLimit => {
+                            sentry::protocol::SpanStatus::ResourceExhausted
+                        }
+                        llm_errors::LlmErrorCategory::Auth => {
+                            sentry::protocol::SpanStatus::Unauthenticated
+                        }
+                        llm_errors::LlmErrorCategory::Billing => {
+                            sentry::protocol::SpanStatus::PermissionDenied
+                        }
+                        llm_errors::LlmErrorCategory::Timeout => {
+                            sentry::protocol::SpanStatus::DeadlineExceeded
+                        }
+                        _ => sentry::protocol::SpanStatus::InternalError,
+                    });
+                    sp.finish();
+                }
+
+                // Capture error event with context
+                sentry::with_scope(
+                    |scope| {
+                        scope.set_tag("error_category", format!("{:?}", classified.category));
+                        scope.set_tag("is_retryable", classified.is_retryable.to_string());
+                        scope.set_tag("is_billing", classified.is_billing.to_string());
+                        if let Some(p) = provider {
+                            scope.set_tag("provider", p);
+                        }
+                        scope.set_extra("raw_error", raw_error.clone().into());
+                        scope.set_extra(
+                            "sanitized_message",
+                            classified.sanitized_message.clone().into(),
+                        );
+                    },
+                    || {
+                        sentry::capture_message(&raw_error, sentry::Level::Error);
+                    },
+                );
+
                 if let (Some(provider), Some(cooldown)) = (provider, cooldown) {
                     cooldown.record_failure(provider, classified.is_billing);
                 }
@@ -1467,6 +1617,12 @@ async fn stream_with_retry(
                 return Err(OpenFangError::LlmDriver(user_msg));
             }
         }
+    }
+
+    // All retries exhausted
+    if let Some(sp) = span {
+        sp.set_status(sentry::protocol::SpanStatus::InternalError);
+        sp.finish();
     }
 
     Err(OpenFangError::LlmDriver(
@@ -1529,6 +1685,24 @@ pub async fn run_agent_loop_streaming(
         &session.agent_id.to_string(),
         serde_json::json!({"streaming": true}),
     );
+
+    // Start Sentry transaction for performance monitoring (streaming variant)
+    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+        "agent.loop.streaming",
+        "ai-inference",
+    ));
+    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
+    sentry::configure_scope(|scope| {
+        scope.set_span(Some(transaction.clone().into()));
+    });
+
+    // Set transaction metadata
+    transaction.set_data("agent_name", manifest.name.clone().into());
+    transaction.set_data("agent_id", session.agent_id.to_string().into());
+    transaction.set_data("model", manifest.model.model.clone().into());
+    transaction.set_data("provider", manifest.model.provider.clone().into());
+    transaction.set_data("user_message_len", user_message.len().into());
+    transaction.set_data("streaming", true.into());
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -1722,9 +1896,6 @@ pub async fn run_agent_loop_streaming(
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
 
-        let parent_span_s: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
-            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
-
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
             messages: messages.clone(),
@@ -1733,7 +1904,7 @@ pub async fn run_agent_loop_streaming(
             temperature: manifest.model.temperature,
             system: Some(system_prompt.clone()),
             thinking: None,
-            sentry_parent_span: parent_span_s,
+            sentry_parent_span: Some(std::sync::Arc::new(transaction.clone().into())),
         };
 
         // Notify phase: Streaming (streaming variant always streams)

@@ -17,6 +17,7 @@ futures = { workspace = true }
 reqwest = { workspace = true }
 tokio-stream = { workspace = true }
 tracing = { workspace = true }
+sentry = { workspace = true }
 uuid = { workspace = true }
 tokio-tungstenite = { workspace = true }
 url = { workspace = true }

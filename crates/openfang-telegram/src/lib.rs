@@ -125,7 +125,7 @@ impl TelegramBot {
 
             async move {
                 let chat_id = msg.chat.id.0.to_string();
-                let user_id = msg.from().map(|u| u.id.0.to_string());
+                let user_id = msg.from.as_ref().map(|u| u.id.0.to_string());
 
                 // Authorization check
                 if !allowed.is_empty() {
