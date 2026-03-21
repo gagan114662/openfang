@@ -235,22 +235,47 @@ pub async fn run_agent_loop(
 ) -> OpenFangResult<AgentLoopResult> {
     info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting agent loop");
 
-    // Start Sentry transaction for performance monitoring
-    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
-        "agent.loop",
-        "ai-inference",
-    ));
-    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
+    // Start Sentry span for performance monitoring.
+    // If there's already an active span (e.g. from SentryHttpLayer), create a child span
+    // so the agent loop appears nested under the HTTP transaction. Otherwise, create a
+    // standalone transaction (e.g. for autonomous/scheduled loops).
+    let parent_span: Option<sentry::TransactionOrSpan> =
+        sentry::configure_scope(|scope| scope.get_span());
+    let transaction: sentry::TransactionOrSpan = if let Some(parent) = parent_span {
+        parent.start_child("agent.loop", "ai-inference").into()
+    } else {
+        sentry::start_transaction(sentry::TransactionContext::new(
+            "agent.loop",
+            "ai-inference",
+        ))
+        .into()
+    };
+    let _transaction_finisher = TransactionFinisher::new(transaction.clone());
     sentry::configure_scope(|scope| {
-        scope.set_span(Some(transaction.clone().into()));
+        scope.set_span(Some(transaction.clone()));
     });
 
-    // Set transaction metadata
+    // Set transaction metadata (data for span details)
     transaction.set_data("agent_name", manifest.name.clone().into());
     transaction.set_data("agent_id", session.agent_id.to_string().into());
     transaction.set_data("model", manifest.model.model.clone().into());
     transaction.set_data("provider", manifest.model.provider.clone().into());
     transaction.set_data("user_message_len", user_message.len().into());
+
+    // Set scope tags for Sentry Highlights (top-level, filterable)
+    let agent_type = manifest
+        .tags
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "assistant".to_string());
+    sentry::configure_scope(|scope| {
+        scope.set_tag("agent_id", &session.agent_id.to_string());
+        scope.set_tag("agent_name", &manifest.name);
+        scope.set_tag("agent_type", &agent_type);
+        scope.set_tag("model", &manifest.model.model);
+        scope.set_tag("provider", &manifest.model.provider);
+        scope.set_tag("session_id", &session.id.to_string());
+    });
 
     emit_lifecycle_event(
         "runtime.agent_loop.started",
@@ -825,6 +850,9 @@ pub async fn run_agent_loop(
                     let effective_exec_policy = manifest.exec_policy.as_ref();
 
                     // Start Sentry span for this tool call
+                    sentry::configure_scope(|scope| {
+                        scope.set_tag("tool_name", &tool_call.name);
+                    });
                     let tool_span = sentry::configure_scope(|scope| {
                         scope.get_span().map(|parent| {
                             let child = parent
@@ -1665,23 +1693,48 @@ pub async fn run_agent_loop_streaming(
 ) -> OpenFangResult<AgentLoopResult> {
     info!(agent = %manifest.name, agent_id = %session.agent_id.0, "Starting streaming agent loop");
 
-    // Start Sentry transaction for performance monitoring (streaming variant)
-    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
-        "agent.loop.streaming",
-        "ai-inference",
-    ));
-    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
+    // Start Sentry span for performance monitoring (streaming variant).
+    // If there's already an active span (e.g. from SentryHttpLayer), create a child span.
+    let parent_span: Option<sentry::TransactionOrSpan> =
+        sentry::configure_scope(|scope| scope.get_span());
+    let transaction: sentry::TransactionOrSpan = if let Some(parent) = parent_span {
+        parent
+            .start_child("agent.loop.streaming", "ai-inference")
+            .into()
+    } else {
+        sentry::start_transaction(sentry::TransactionContext::new(
+            "agent.loop.streaming",
+            "ai-inference",
+        ))
+        .into()
+    };
+    let _transaction_finisher = TransactionFinisher::new(transaction.clone());
     sentry::configure_scope(|scope| {
-        scope.set_span(Some(transaction.clone().into()));
+        scope.set_span(Some(transaction.clone()));
     });
 
-    // Set transaction metadata
+    // Set transaction metadata (data for span details)
     transaction.set_data("agent_name", manifest.name.clone().into());
     transaction.set_data("agent_id", session.agent_id.to_string().into());
     transaction.set_data("model", manifest.model.model.clone().into());
     transaction.set_data("provider", manifest.model.provider.clone().into());
     transaction.set_data("user_message_len", user_message.len().into());
     transaction.set_data("streaming", true.into());
+
+    // Set scope tags for Sentry Highlights (top-level, filterable)
+    let agent_type = manifest
+        .tags
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "assistant".to_string());
+    sentry::configure_scope(|scope| {
+        scope.set_tag("agent_id", &session.agent_id.to_string());
+        scope.set_tag("agent_name", &manifest.name);
+        scope.set_tag("agent_type", &agent_type);
+        scope.set_tag("model", &manifest.model.model);
+        scope.set_tag("provider", &manifest.model.provider);
+        scope.set_tag("session_id", &session.id.to_string());
+    });
 
     emit_lifecycle_event(
         "runtime.agent_loop.started",
@@ -1689,24 +1742,6 @@ pub async fn run_agent_loop_streaming(
         &session.agent_id.to_string(),
         serde_json::json!({"streaming": true}),
     );
-
-    // Start Sentry transaction for performance monitoring (streaming variant)
-    let transaction = sentry::start_transaction(sentry::TransactionContext::new(
-        "agent.loop.streaming",
-        "ai-inference",
-    ));
-    let _transaction_finisher = TransactionFinisher::new(transaction.clone().into());
-    sentry::configure_scope(|scope| {
-        scope.set_span(Some(transaction.clone().into()));
-    });
-
-    // Set transaction metadata
-    transaction.set_data("agent_name", manifest.name.clone().into());
-    transaction.set_data("agent_id", session.agent_id.to_string().into());
-    transaction.set_data("model", manifest.model.model.clone().into());
-    transaction.set_data("provider", manifest.model.provider.clone().into());
-    transaction.set_data("user_message_len", user_message.len().into());
-    transaction.set_data("streaming", true.into());
 
     // Extract hand-allowed env vars from manifest metadata (set by kernel for hand settings)
     let hand_allowed_env: Vec<String> = manifest
@@ -2277,6 +2312,9 @@ pub async fn run_agent_loop_streaming(
                     let effective_exec_policy = manifest.exec_policy.as_ref();
 
                     // Start Sentry span for this tool call (streaming)
+                    sentry::configure_scope(|scope| {
+                        scope.set_tag("tool_name", &tool_call.name);
+                    });
                     let tool_span = sentry::configure_scope(|scope| {
                         scope.get_span().map(|parent| {
                             let child = parent
