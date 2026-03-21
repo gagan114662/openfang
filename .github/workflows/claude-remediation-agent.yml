@@ -48,8 +48,8 @@ jobs:
       - name: Parse remediation eligibility
         id: parse
         run: |
-          cfg_enabled=$(jq -r '.automation.claudeRemediation.enabled // true' .harness/policy.contract.json)
-          require_ingestion=$(jq -r '.automation.claudeRemediation.requireFindingsIngestion // true' .harness/policy.contract.json)
+          cfg_enabled=$(jq -r 'if .automation.claudeRemediation.enabled == false then "false" else "true" end' .harness/policy.contract.json)
+          require_ingestion=$(jq -r 'if .automation.claudeRemediation.requireFindingsIngestion == false then "false" else "true" end' .harness/policy.contract.json)
           status=$(jq -r '.status // "missing"' artifacts/claude-findings.json)
           actionable_count=$(jq '[.findings[] | select(.actionable == true)] | length' artifacts/claude-findings.json)
 
@@ -166,7 +166,7 @@ jobs:
       - name: Fail workflow when ingestion is required but missing
         if: ${{ steps.parse.outputs.status != 'success' }}
         run: |
-          required=$(jq -r '.automation.claudeRemediation.requireFindingsIngestion // true' .harness/policy.contract.json)
+          required=$(jq -r 'if .automation.claudeRemediation.requireFindingsIngestion == false then "false" else "true" end' .harness/policy.contract.json)
           if [ "$required" = "true" ]; then
             echo "Claude ingestion is required and did not succeed for current head SHA"
             exit 1

@@ -1704,6 +1704,63 @@ impl OpenFangKernel {
                         .registry
                         .set_state(agent_id, AgentState::Running);
 
+                    // Cost metering for streaming path
+                    let model_name = &manifest.model.model;
+                    let cost = MeteringEngine::estimate_cost_with_catalog(
+                        &kernel_clone
+                            .model_catalog
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner()),
+                        model_name,
+                        result.total_usage.input_tokens,
+                        result.total_usage.output_tokens,
+                    );
+                    let _ = kernel_clone
+                        .metering
+                        .record(&openfang_memory::usage::UsageRecord {
+                            agent_id,
+                            model: model_name.clone(),
+                            input_tokens: result.total_usage.input_tokens,
+                            output_tokens: result.total_usage.output_tokens,
+                            cost_usd: cost,
+                            tool_calls: result.iterations.saturating_sub(1),
+                        });
+
+                    // Populate eval metrics with cost and emit
+                    let mut result = result;
+                    if let Some(ref mut metrics) = result.eval_metrics {
+                        if cost > 0.0 {
+                            if metrics.task_success {
+                                metrics.cost_per_successful_task = Some(cost);
+                            } else {
+                                metrics.cost_on_failure = Some(cost);
+                            }
+                        }
+                        info!(
+                            eval_outcome = %metrics.outcome,
+                            eval_task_success = metrics.task_success,
+                            eval_autonomous_task_yield = metrics.autonomous_task_yield,
+                            eval_time_to_completion_ms = metrics.time_to_completion_ms,
+                            eval_tool_success_rate = ?metrics.tool_success_rate,
+                            eval_stuck_loop_rate = ?metrics.stuck_loop_rate,
+                            eval_cost_per_successful_task = ?metrics.cost_per_successful_task,
+                            eval_cost_on_failure = ?metrics.cost_on_failure,
+                            eval_human_intervention_rate = metrics.human_intervention_rate,
+                            eval_tool_calls_total = metrics.tool_calls_total,
+                            eval_tool_calls_errored = metrics.tool_calls_errored,
+                            eval_tool_calls_blocked = metrics.tool_calls_blocked,
+                            agent = %manifest.name,
+                            agent_id = %agent_id,
+                            "Agent eval metrics (streaming)"
+                        );
+                        openfang_runtime::agent_loop::emit_lifecycle_event(
+                            "runtime.agent_loop.eval",
+                            &manifest.name,
+                            &agent_id.to_string(),
+                            serde_json::to_value(&*metrics).unwrap_or_default(),
+                        );
+                    }
+
                     // Post-loop compaction check: if session now exceeds token threshold,
                     // trigger compaction in background for the next call.
                     {
@@ -1824,6 +1881,7 @@ impl OpenFangKernel {
             cost_usd: None,
             silent: false,
             directives: Default::default(),
+            eval_metrics: None,
         })
     }
 
@@ -1884,6 +1942,7 @@ impl OpenFangKernel {
             iterations: 1,
             silent: false,
             directives: Default::default(),
+            eval_metrics: None,
         })
     }
 
@@ -2207,6 +2266,71 @@ impl OpenFangKernel {
                 // Tokens are already in result.total_usage, omit cost
                 result.cost_usd = None;
             }
+        }
+
+        // Populate eval metrics with cost and emit
+        if let Some(ref mut metrics) = result.eval_metrics {
+            if cost > 0.0 {
+                if metrics.task_success {
+                    metrics.cost_per_successful_task = Some(cost);
+                } else {
+                    metrics.cost_on_failure = Some(cost);
+                }
+            }
+
+            // Set Sentry span data for eval metrics
+            sentry::configure_scope(|scope| {
+                if let Some(span) = scope.get_span() {
+                    span.set_data("eval.task_success", metrics.task_success.into());
+                    span.set_data(
+                        "eval.outcome",
+                        sentry::protocol::Value::from(metrics.outcome.clone()),
+                    );
+                    span.set_data(
+                        "eval.time_to_completion_ms",
+                        metrics.time_to_completion_ms.into(),
+                    );
+                    if let Some(tsr) = metrics.tool_success_rate {
+                        span.set_data("eval.tool_success_rate", tsr.into());
+                    }
+                    if let Some(slr) = metrics.stuck_loop_rate {
+                        span.set_data("eval.stuck_loop_rate", slr.into());
+                    }
+                    if let Some(cps) = metrics.cost_per_successful_task {
+                        span.set_data("eval.cost_per_successful_task", cps.into());
+                    }
+                    if let Some(cof) = metrics.cost_on_failure {
+                        span.set_data("eval.cost_on_failure", cof.into());
+                    }
+                }
+            });
+
+            // Emit structured tracing log for Loki ingestion
+            info!(
+                eval_outcome = %metrics.outcome,
+                eval_task_success = metrics.task_success,
+                eval_autonomous_task_yield = metrics.autonomous_task_yield,
+                eval_time_to_completion_ms = metrics.time_to_completion_ms,
+                eval_tool_success_rate = ?metrics.tool_success_rate,
+                eval_stuck_loop_rate = ?metrics.stuck_loop_rate,
+                eval_cost_per_successful_task = ?metrics.cost_per_successful_task,
+                eval_cost_on_failure = ?metrics.cost_on_failure,
+                eval_human_intervention_rate = metrics.human_intervention_rate,
+                eval_tool_calls_total = metrics.tool_calls_total,
+                eval_tool_calls_errored = metrics.tool_calls_errored,
+                eval_tool_calls_blocked = metrics.tool_calls_blocked,
+                agent = %entry.name,
+                agent_id = %agent_id,
+                "Agent eval metrics"
+            );
+
+            // Emit lifecycle event to Sentry
+            openfang_runtime::agent_loop::emit_lifecycle_event(
+                "runtime.agent_loop.eval",
+                &entry.name,
+                &agent_id.to_string(),
+                serde_json::to_value(&*metrics).unwrap_or_default(),
+            );
         }
 
         Ok(result)

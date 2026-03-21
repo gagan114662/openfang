@@ -165,7 +165,7 @@ def main() -> int:
     keywords = [str(k).lower() for k in review_policy.get("actionableSummaryKeywords", [])]
 
     primary_enforcement = _provider_enforcement(contract, primary_provider, default="required")
-    enforce_review_state = bool(rollout_settings.get("enforceReviewState", False) or primary_enforcement != "advisory")
+    enforce_review_state = bool(rollout_settings.get("enforceReviewState", False) and primary_enforcement != "advisory")
 
     token = os.getenv(args.token_env, "")
     review_state: ReviewState
