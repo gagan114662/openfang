@@ -53,6 +53,7 @@ If `api_key` is empty or not set, the API is accessible without authentication. 
 ### Public Endpoints (No Auth Required)
 
 - `GET /` (WebChat UI)
+- `GET /healthz`
 - `GET /api/health`
 - `GET /api/health/detail`
 - `GET /api/status`
@@ -628,6 +629,20 @@ Get a specific template's manifest and raw TOML.
 ---
 
 ## System Endpoints
+
+### GET /healthz
+
+Kubernetes-style health check for container orchestration. Does not require authentication. Returns version, uptime, and agent count. Available even when no agents are running.
+
+**Response** `200 OK`:
+
+```json
+{
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "agent_count": 3
+}
+```
 
 ### GET /api/health
 
@@ -2150,6 +2165,7 @@ The `Retry-After` header indicates the window duration in seconds.
 |--------|------|-------------|
 | **System** | | |
 | GET | `/` | WebChat UI |
+| GET | `/healthz` | K8s-style health check (no auth) |
 | GET | `/api/health` | Health check (no auth, redacted) |
 | GET | `/api/health/detail` | Full health check (auth required) |
 | GET | `/api/status` | Kernel status |
