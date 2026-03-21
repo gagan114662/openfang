@@ -173,6 +173,13 @@ jobs:
       - name: Build CLI
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo build --release --target ${{ matrix.target }} --bin openfang
+      - name: Upload debug symbols to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          curl -sL https://sentry.io/get-cli/ | bash
+          sentry-cli debug-files upload --include-sources target/${{ matrix.target }}/release/
       - name: Package (Unix)
         if: matrix.archive == 'tar.gz'
         run: |

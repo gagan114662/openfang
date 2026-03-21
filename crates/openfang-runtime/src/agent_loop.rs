@@ -389,12 +389,16 @@ pub async fn run_agent_loop(
     // The full compaction system handles sophisticated summarization, but this prevents
     // the catastrophic case where 200+ messages cause instant context overflow.
     if messages.len() > MAX_HISTORY_MESSAGES {
-        let trim_count = messages.len() - MAX_HISTORY_MESSAGES;
+        let before = messages.len();
+        let trim_count = before - MAX_HISTORY_MESSAGES;
+        let after = before - trim_count;
         warn!(
             agent = %manifest.name,
-            total_messages = messages.len(),
-            trimming = trim_count,
-            "Trimming old messages to prevent context overflow"
+            before,
+            after,
+            trimmed = trim_count,
+            "Trimming {trim_count} old messages from '{}' ({before} -> {after})",
+            manifest.name,
         );
         messages.drain(..trim_count);
     }

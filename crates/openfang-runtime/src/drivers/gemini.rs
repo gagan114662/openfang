@@ -379,6 +379,11 @@ impl LlmDriver for GeminiDriver {
             );
             debug!(url = %url, attempt, "Sending Gemini API request");
 
+            let span = request
+                .sentry_parent_span
+                .as_ref()
+                .map(|parent| parent.start_child("http.client", &format!("POST {url}")));
+
             let resp = self
                 .client
                 .post(&url)
@@ -392,9 +397,23 @@ impl LlmDriver for GeminiDriver {
             let status = resp.status().as_u16();
 
             if status == 429 || status == 503 {
+                if let Some(span) = span {
+                    span.set_data(
+                        "http.status_code",
+                        sentry::protocol::Value::from(status as u64),
+                    );
+                    span.finish();
+                }
                 if attempt < max_retries {
                     let retry_ms = (attempt + 1) as u64 * 2000;
-                    warn!(status, retry_ms, "Rate limited/overloaded, retrying");
+                    warn!(
+                        provider = "gemini",
+                        model = %request.model,
+                        status,
+                        retry_after_ms = retry_ms,
+                        "Rate limited by Gemini for model '{}', retrying in {retry_ms}ms",
+                        request.model,
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(retry_ms)).await;
                     continue;
                 }
@@ -407,6 +426,22 @@ impl LlmDriver for GeminiDriver {
                         retry_after_ms: 5000,
                     }
                 });
+            }
+
+            if let Some(span) = &span {
+                span.set_data("http.method", sentry::protocol::Value::from("POST"));
+                span.set_data("provider", sentry::protocol::Value::from("gemini"));
+                span.set_data(
+                    "model",
+                    sentry::protocol::Value::from(request.model.as_str()),
+                );
+                span.set_data(
+                    "http.status_code",
+                    sentry::protocol::Value::from(status as u64),
+                );
+            }
+            if let Some(span) = span {
+                span.finish();
             }
 
             if !resp.status().is_success() {
@@ -459,6 +494,11 @@ impl LlmDriver for GeminiDriver {
             );
             debug!(url = %url, attempt, "Sending Gemini streaming request");
 
+            let span = request
+                .sentry_parent_span
+                .as_ref()
+                .map(|parent| parent.start_child("http.client", &format!("POST {url}")));
+
             let resp = self
                 .client
                 .post(&url)
@@ -472,11 +512,22 @@ impl LlmDriver for GeminiDriver {
             let status = resp.status().as_u16();
 
             if status == 429 || status == 503 {
+                if let Some(span) = span {
+                    span.set_data(
+                        "http.status_code",
+                        sentry::protocol::Value::from(status as u64),
+                    );
+                    span.finish();
+                }
                 if attempt < max_retries {
                     let retry_ms = (attempt + 1) as u64 * 2000;
                     warn!(
+                        provider = "gemini",
+                        model = %request.model,
                         status,
-                        retry_ms, "Rate limited/overloaded (stream), retrying"
+                        retry_after_ms = retry_ms,
+                        "Rate limited by Gemini for model '{}' (stream), retrying in {retry_ms}ms",
+                        request.model,
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(retry_ms)).await;
                     continue;
@@ -490,6 +541,22 @@ impl LlmDriver for GeminiDriver {
                         retry_after_ms: 5000,
                     }
                 });
+            }
+
+            if let Some(span) = &span {
+                span.set_data("http.method", sentry::protocol::Value::from("POST"));
+                span.set_data("provider", sentry::protocol::Value::from("gemini"));
+                span.set_data(
+                    "model",
+                    sentry::protocol::Value::from(request.model.as_str()),
+                );
+                span.set_data(
+                    "http.status_code",
+                    sentry::protocol::Value::from(status as u64),
+                );
+            }
+            if let Some(span) = span {
+                span.finish();
             }
 
             if !resp.status().is_success() {
