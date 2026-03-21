@@ -55,6 +55,7 @@ jobs:
           - openfang-api
           - openfang-channels
           - openfang-cli
+          - openfang-desktop
           - openfang-extensions
           - openfang-hands
           - openfang-kernel
@@ -144,12 +145,10 @@ jobs:
           trufflehog filesystem . \
             --no-update \
             --fail \
-            --only-verified \
             --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock")
 
   ci-install-smoke:
-    name: ci-install-smoke
-    runs-on: ubuntu-latest
+runs-on: ubuntu-latest
     steps:
       - name: Fetch and syntax-check shell installer
         run: |
