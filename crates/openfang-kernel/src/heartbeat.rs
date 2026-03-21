@@ -78,7 +78,7 @@ pub fn check_agents(registry: &AgentRegistry, config: &HeartbeatConfig) -> Vec<H
         if unresponsive {
             sentry::with_scope(
                 |scope| {
-                    scope.set_tag("agent_id", &entry_ref.id.to_string());
+                    scope.set_tag("agent_id", entry_ref.id.to_string());
                     scope.set_tag("agent_name", &entry_ref.name);
                 },
                 || {
