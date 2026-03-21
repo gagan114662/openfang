@@ -96,7 +96,10 @@
         "risk-policy-gate",
         "claude-remediation-agent",
         "pr-review-harness",
-        "ci-check"
+        "ci-check",
+        "ci-test",
+        "ci-fmt",
+        "ci-secrets"
       ]
     }
   },
