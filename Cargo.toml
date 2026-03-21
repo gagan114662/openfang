@@ -16,6 +16,7 @@ members = [
     "crates/openfang-hands",
     "crates/openfang-extensions",
     "xtask",
+    "crates/openfang-experiments",
 ]
 
 [workspace.package]
