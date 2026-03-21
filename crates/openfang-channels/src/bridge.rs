@@ -691,8 +691,7 @@ async fn dispatch_message(
                             let t = text.clone();
                             let aid = *aid;
                             let name = name.clone();
-                            let hub =
-                                sentry::Hub::new_from_top(sentry::Hub::current());
+                            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                             handles_vec.push(tokio::spawn(async move {
                                 let _guard = hub.push_scope();
                                 let result = h.send_message(aid, &t).await;

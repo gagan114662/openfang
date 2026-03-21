@@ -3281,8 +3281,7 @@ impl OpenFangKernel {
             let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
                 let _guard = hub.push_scope();
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(5));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                 loop {
                     interval.tick().await;
                     if kernel.supervisor.is_shutting_down() {

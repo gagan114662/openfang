@@ -36,11 +36,11 @@ pub fn run() {
         .unwrap_or_else(|_| "openfang=info,tauri=info".into());
     let sentry_layer = sentry_tracing::layer()
         .enable_span_attributes()
-        .event_filter(|metadata| match metadata.level() {
-            &tracing::Level::ERROR => {
+        .event_filter(|metadata| match *metadata.level() {
+            tracing::Level::ERROR => {
                 sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
             }
-            &tracing::Level::WARN | &tracing::Level::INFO => {
+            tracing::Level::WARN | tracing::Level::INFO => {
                 sentry_tracing::EventFilter::Breadcrumb.union(sentry_tracing::EventFilter::Log)
             }
             _ => sentry_tracing::EventFilter::Ignore,

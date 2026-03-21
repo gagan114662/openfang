@@ -710,14 +710,14 @@ fn init_tracing_stderr() {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let sentry_layer = sentry_tracing::layer()
         .enable_span_attributes()
-        .event_filter(|metadata| match metadata.level() {
-            &tracing::Level::ERROR => {
+        .event_filter(|metadata| match *metadata.level() {
+            tracing::Level::ERROR => {
                 sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
             }
-            &tracing::Level::WARN => {
+            tracing::Level::WARN => {
                 sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
             }
-            &tracing::Level::INFO => {
+            tracing::Level::INFO => {
                 sentry_tracing::EventFilter::Breadcrumb.union(sentry_tracing::EventFilter::Log)
             }
             _ => sentry_tracing::EventFilter::Ignore,
@@ -742,21 +742,18 @@ fn init_tracing_file(logging: &openfang_types::config::LoggingConfig) {
         Ok(file) => {
             let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-            let sentry_layer = sentry_tracing::layer()
-                .enable_span_attributes()
-                .event_filter(|metadata| match metadata.level() {
-                    &tracing::Level::ERROR => {
-                        sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
-                    }
-                    &tracing::Level::WARN => {
-                        sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
-                    }
-                    &tracing::Level::INFO => {
-                        sentry_tracing::EventFilter::Breadcrumb
-                            .union(sentry_tracing::EventFilter::Log)
-                    }
-                    _ => sentry_tracing::EventFilter::Ignore,
-                });
+            let sentry_layer =
+                sentry_tracing::layer()
+                    .enable_span_attributes()
+                    .event_filter(|metadata| match *metadata.level() {
+                        tracing::Level::ERROR => sentry_tracing::EventFilter::Event
+                            .union(sentry_tracing::EventFilter::Log),
+                        tracing::Level::WARN => sentry_tracing::EventFilter::Event
+                            .union(sentry_tracing::EventFilter::Log),
+                        tracing::Level::INFO => sentry_tracing::EventFilter::Breadcrumb
+                            .union(sentry_tracing::EventFilter::Log),
+                        _ => sentry_tracing::EventFilter::Ignore,
+                    });
 
             tracing_subscriber::registry()
                 .with(env_filter)
@@ -776,15 +773,11 @@ fn init_tracing_file(logging: &openfang_types::config::LoggingConfig) {
                 .with(
                     sentry_tracing::layer()
                         .enable_span_attributes()
-                        .event_filter(|metadata| match metadata.level() {
-                            &tracing::Level::ERROR => {
-                                sentry_tracing::EventFilter::Event
-                                    .union(sentry_tracing::EventFilter::Log)
-                            }
-                            &tracing::Level::WARN => {
-                                sentry_tracing::EventFilter::Event
-                                    .union(sentry_tracing::EventFilter::Log)
-                            }
+                        .event_filter(|metadata| match *metadata.level() {
+                            tracing::Level::ERROR => sentry_tracing::EventFilter::Event
+                                .union(sentry_tracing::EventFilter::Log),
+                            tracing::Level::WARN => sentry_tracing::EventFilter::Event
+                                .union(sentry_tracing::EventFilter::Log),
                             _ => sentry_tracing::EventFilter::Ignore,
                         }),
                 )
