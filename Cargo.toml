@@ -136,5 +136,7 @@ sentry-tower = "0.47"
 [profile.release]
 lto = true
 codegen-units = 1
-strip = true
+strip = false
+debug = 1
+split-debuginfo = "packed"
 opt-level = 3

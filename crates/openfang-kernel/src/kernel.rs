@@ -525,6 +525,35 @@ impl OpenFangKernel {
                 attach_stacktrace: true,
                 in_app_include: vec!["openfang_"],
                 enable_logs: true,
+                before_send: Some(Arc::new(|mut event| {
+                    // Promote tracing span fields to top-level Sentry tags so they
+                    // appear in Highlights instead of buried in "Rust Tracing Fields".
+                    let fields_to_promote = [
+                        "agent",
+                        "agent_id",
+                        "agent_name",
+                        "session_id",
+                        "provider",
+                        "model",
+                        "event.kind",
+                    ];
+                    if let Some(sentry::protocol::Context::Other(map)) =
+                        event.contexts.get("Rust Tracing Fields")
+                    {
+                        let tags_to_add: Vec<_> = fields_to_promote
+                            .iter()
+                            .filter_map(|field| {
+                                map.get(*field)
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| (field.to_string(), s.to_string()))
+                            })
+                            .collect();
+                        for (k, v) in tags_to_add {
+                            event.tags.insert(k, v);
+                        }
+                    }
+                    Some(event)
+                })),
                 ..Default::default()
             },
         ));

@@ -26,13 +26,14 @@ pub async fn request_logging(request: Request<Body>, next: Next) -> Response<Bod
     let elapsed = start.elapsed();
     let status = response.status().as_u16();
 
+    let latency_ms = elapsed.as_millis() as u64;
     info!(
         request_id = %request_id,
         method = %method,
         path = %uri,
         status = status,
-        latency_ms = elapsed.as_millis() as u64,
-        "API request"
+        latency_ms = latency_ms,
+        "API {method} {uri} -> {status} ({latency_ms}ms)",
     );
 
     // Inject the request ID into the response
@@ -89,6 +90,7 @@ pub async fn auth(
         || path == "/api/agents"
         || path == "/api/profiles"
         || path == "/api/config"
+        || path == "/api/telemetry/structured"
         || path.starts_with("/api/uploads/")
     {
         return next.run(request).await;

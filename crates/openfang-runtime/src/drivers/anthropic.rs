@@ -203,6 +203,11 @@ impl LlmDriver for AnthropicDriver {
             let url = format!("{}/v1/messages", self.base_url);
             debug!(url = %url, attempt, "Sending Anthropic API request");
 
+            let span = request
+                .sentry_parent_span
+                .as_ref()
+                .map(|parent| parent.start_child("http.client", &format!("POST {url}")));
+
             // Set authentication header based on token type
             let mut req_builder = self.client.post(&url);
             if self.use_oauth {
@@ -222,9 +227,23 @@ impl LlmDriver for AnthropicDriver {
             let status = resp.status().as_u16();
 
             if status == 429 || status == 529 {
+                if let Some(span) = span {
+                    span.set_data(
+                        "http.status_code",
+                        sentry::protocol::Value::from(status as u64),
+                    );
+                    span.finish();
+                }
                 if attempt < max_retries {
                     let retry_ms = (attempt + 1) as u64 * 2000;
-                    warn!(status, retry_ms, "Rate limited, retrying");
+                    warn!(
+                        provider = "anthropic",
+                        model = %request.model,
+                        status,
+                        retry_after_ms = retry_ms,
+                        "Rate limited by Anthropic for model '{}', retrying in {retry_ms}ms",
+                        request.model,
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(retry_ms)).await;
                     continue;
                 }
@@ -237,6 +256,22 @@ impl LlmDriver for AnthropicDriver {
                         retry_after_ms: 5000,
                     }
                 });
+            }
+
+            if let Some(span) = &span {
+                span.set_data("http.method", sentry::protocol::Value::from("POST"));
+                span.set_data("provider", sentry::protocol::Value::from("anthropic"));
+                span.set_data(
+                    "model",
+                    sentry::protocol::Value::from(request.model.as_str()),
+                );
+                span.set_data(
+                    "http.status_code",
+                    sentry::protocol::Value::from(status as u64),
+                );
+            }
+            if let Some(span) = span {
+                span.finish();
             }
 
             if !resp.status().is_success() {
@@ -315,6 +350,11 @@ impl LlmDriver for AnthropicDriver {
             let url = format!("{}/v1/messages", self.base_url);
             debug!(url = %url, attempt, "Sending Anthropic streaming request");
 
+            let span = request
+                .sentry_parent_span
+                .as_ref()
+                .map(|parent| parent.start_child("http.client", &format!("POST {url} (stream)")));
+
             // Set authentication header based on token type
             let mut req_builder = self.client.post(&url);
             if self.use_oauth {
@@ -334,9 +374,23 @@ impl LlmDriver for AnthropicDriver {
             let status = resp.status().as_u16();
 
             if status == 429 || status == 529 {
+                if let Some(span) = span {
+                    span.set_data(
+                        "http.status_code",
+                        sentry::protocol::Value::from(status as u64),
+                    );
+                    span.finish();
+                }
                 if attempt < max_retries {
                     let retry_ms = (attempt + 1) as u64 * 2000;
-                    warn!(status, retry_ms, "Rate limited (stream), retrying");
+                    warn!(
+                        provider = "anthropic",
+                        model = %request.model,
+                        status,
+                        retry_after_ms = retry_ms,
+                        "Rate limited by Anthropic for model '{}' (stream), retrying in {retry_ms}ms",
+                        request.model,
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(retry_ms)).await;
                     continue;
                 }
@@ -349,6 +403,22 @@ impl LlmDriver for AnthropicDriver {
                         retry_after_ms: 5000,
                     }
                 });
+            }
+
+            if let Some(span) = &span {
+                span.set_data("http.method", sentry::protocol::Value::from("POST"));
+                span.set_data("provider", sentry::protocol::Value::from("anthropic"));
+                span.set_data(
+                    "model",
+                    sentry::protocol::Value::from(request.model.as_str()),
+                );
+                span.set_data(
+                    "http.status_code",
+                    sentry::protocol::Value::from(status as u64),
+                );
+            }
+            if let Some(span) = span {
+                span.finish();
             }
 
             if !resp.status().is_success() {

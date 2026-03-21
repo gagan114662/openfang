@@ -8,7 +8,7 @@
 use crate::registry::AgentRegistry;
 use chrono::Utc;
 use openfang_types::agent::{AgentId, AgentState};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Default heartbeat check interval (seconds).
 const DEFAULT_CHECK_INTERVAL_SECS: u64 = 30;
@@ -76,17 +76,39 @@ pub fn check_agents(registry: &AgentRegistry, config: &HeartbeatConfig) -> Vec<H
         let unresponsive = inactive_secs > timeout_secs;
 
         if unresponsive {
-            warn!(
-                agent = %entry_ref.name,
-                inactive_secs,
-                timeout_secs,
-                "Agent is unresponsive"
+            sentry::with_scope(
+                |scope| {
+                    scope.set_tag("agent_id", entry_ref.id.to_string());
+                    scope.set_tag("agent_name", &entry_ref.name);
+                },
+                || {
+                    // Escalate to ERROR if agent has been unresponsive for 3x timeout
+                    if inactive_secs > timeout_secs * 3 {
+                        error!(
+                            agent = %entry_ref.name,
+                            agent_id = %entry_ref.id,
+                            inactive_secs,
+                            timeout_secs,
+                            "Agent '{}' critically unresponsive for {inactive_secs}s (timeout: {timeout_secs}s)",
+                            entry_ref.name,
+                        );
+                    } else {
+                        warn!(
+                            agent = %entry_ref.name,
+                            agent_id = %entry_ref.id,
+                            inactive_secs,
+                            timeout_secs,
+                            "Agent '{}' unresponsive for {inactive_secs}s (timeout: {timeout_secs}s)",
+                            entry_ref.name,
+                        );
+                    }
+                },
             );
         } else {
             debug!(
                 agent = %entry_ref.name,
                 inactive_secs,
-                "Agent heartbeat OK"
+                "Heartbeat OK for '{}'", entry_ref.name,
             );
         }
 
