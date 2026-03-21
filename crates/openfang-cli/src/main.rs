@@ -712,7 +712,9 @@ fn init_tracing_stderr() {
         .enable_span_attributes()
         .event_filter(|metadata| match metadata.level() {
             &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
-            _ => sentry_tracing::EventFilter::Event,
+            &tracing::Level::WARN => sentry_tracing::EventFilter::Event,
+            &tracing::Level::INFO => sentry_tracing::EventFilter::Breadcrumb,
+            _ => sentry_tracing::EventFilter::Ignore,
         });
 
     tracing_subscriber::registry()

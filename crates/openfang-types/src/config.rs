@@ -1123,6 +1123,43 @@ pub struct SentryConfig {
     /// Custom tags to add to all Sentry events.
     #[serde(default)]
     pub tags: std::collections::HashMap<String, String>,
+
+    /// Sample rate for error events (0.0 to 1.0). Controls what fraction of
+    /// errors are sent to Sentry. Default 1.0 = send all errors.
+    #[serde(default = "default_sentry_sample_rate")]
+    pub sample_rate: f32,
+
+    /// Sample rate for profiling (0.0 to 1.0). Default 0.0 = disabled.
+    #[serde(default)]
+    pub profiles_sample_rate: f32,
+
+    /// Whether to flush Sentry events in real-time (vs batching).
+    #[serde(default)]
+    pub realtime_log_flush: bool,
+
+    /// Timeout in milliseconds for the Sentry flush on shutdown.
+    #[serde(default = "default_sentry_flush_timeout_ms")]
+    pub realtime_log_flush_timeout_ms: u64,
+
+    /// Sentry auth token (for sentry_live_summary.py and API access).
+    #[serde(default)]
+    pub auth_token: Option<String>,
+
+    /// Sentry organization slug (for sentry_live_summary.py).
+    #[serde(default)]
+    pub org_slug: Option<String>,
+
+    /// Sentry project slug (for sentry_live_summary.py).
+    #[serde(default)]
+    pub project_slug: Option<String>,
+
+    /// Sentry API base URL (for sentry_live_summary.py).
+    #[serde(default)]
+    pub api_base_url: Option<String>,
+
+    /// Timeout in seconds for Sentry API requests.
+    #[serde(default = "default_sentry_api_timeout_secs")]
+    pub api_timeout_secs: u64,
 }
 
 fn default_sentry_environment() -> String {
@@ -1137,6 +1174,14 @@ fn default_sentry_sample_rate() -> f32 {
     1.0 // 100% sampling in dev
 }
 
+fn default_sentry_flush_timeout_ms() -> u64 {
+    2000
+}
+
+fn default_sentry_api_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for SentryConfig {
     fn default() -> Self {
         Self {
@@ -1147,6 +1192,15 @@ impl Default for SentryConfig {
             performance_monitoring: true,
             error_tracking: true,
             tags: std::collections::HashMap::new(),
+            sample_rate: default_sentry_sample_rate(),
+            profiles_sample_rate: 0.0,
+            realtime_log_flush: false,
+            realtime_log_flush_timeout_ms: default_sentry_flush_timeout_ms(),
+            auth_token: None,
+            org_slug: None,
+            project_slug: None,
+            api_base_url: None,
+            api_timeout_secs: default_sentry_api_timeout_secs(),
         }
     }
 }

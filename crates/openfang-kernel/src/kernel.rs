@@ -520,8 +520,10 @@ impl OpenFangKernel {
                 release: Some(sentry_release().into()),
                 environment: Some(config.sentry.environment.clone().into()),
                 traces_sample_rate: config.sentry.traces_sample_rate,
+                sample_rate: config.sentry.sample_rate,
                 send_default_pii: config.sentry.include_prompts,
                 attach_stacktrace: true,
+                in_app_include: vec!["openfang_"],
                 ..Default::default()
             },
         ));
@@ -1377,7 +1379,9 @@ impl OpenFangKernel {
             let message_owned = message.to_string();
             let entry_clone = entry.clone();
 
+            let sentry_hub = sentry::Hub::new_from_top(sentry::Hub::current());
             let handle = tokio::spawn(async move {
+                let _sentry_guard = sentry_hub.push_scope();
                 let result = if is_wasm {
                     kernel_clone
                         .execute_wasm_agent(&entry_clone, &message_owned, kernel_handle)
@@ -1580,7 +1584,9 @@ impl OpenFangKernel {
         };
         let kernel_clone = Arc::clone(self);
 
+        let sentry_hub = sentry::Hub::new_from_top(sentry::Hub::current());
         let handle = tokio::spawn(async move {
+            let _sentry_guard = sentry_hub.push_scope();
             // Auto-compact if the session is large before running the loop
             if needs_compact {
                 info!(agent_id = %agent_id, messages = session.messages.len(), "Auto-compacting session");
@@ -1707,7 +1713,9 @@ impl OpenFangKernel {
                         let estimated = estimate_token_count(&session.messages, None, None);
                         if needs_compaction_by_tokens(estimated, &config) {
                             let kc = kernel_clone.clone();
+                            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                             tokio::spawn(async move {
+                                let _guard = hub.push_scope();
                                 info!(agent_id = %agent_id, estimated_tokens = estimated, "Post-loop compaction triggered");
                                 if let Err(e) = kc.compact_agent_session(agent_id).await {
                                     warn!(agent_id = %agent_id, "Post-loop compaction failed: {e}");
@@ -3001,7 +3009,9 @@ impl OpenFangKernel {
                 if let Some(kernel) = weak.upgrade() {
                     let aid = *agent_id;
                     let msg = message.clone();
+                    let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                     tokio::spawn(async move {
+                        let _guard = hub.push_scope();
                         if let Err(e) = kernel.send_message(aid, &msg).await {
                             warn!(agent = %aid, "Trigger dispatch failed: {e}");
                         }
@@ -3139,14 +3149,36 @@ impl OpenFangKernel {
             info!("Started {started} background agent loop(s)");
         }
 
+        // Periodic Sentry flush when realtime_log_flush is enabled
+        if self.config.sentry.realtime_log_flush {
+            let flush_ms = self.config.sentry.realtime_log_flush_timeout_ms;
+            let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
+            tokio::spawn(async move {
+                let _guard = hub.push_scope();
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    if kernel.supervisor.is_shutting_down() {
+                        break;
+                    }
+                    if let Some(client) = sentry::Hub::current().client() {
+                        client.flush(Some(std::time::Duration::from_millis(flush_ms)));
+                    }
+                }
+            });
+        }
+
         // Start heartbeat monitor for agent health checking
         self.start_heartbeat_monitor();
 
         // Start Raindrop incident subscriber
         if let Some(ref subscriber) = self.raindrop_subscriber {
             let subscriber_clone = subscriber.clone();
-
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 if let Err(e) = subscriber_clone.subscribe_and_forward().await {
                     tracing::error!("Raindrop subscriber failed: {}", e);
                 }
@@ -3156,7 +3188,9 @@ impl OpenFangKernel {
         // Start OFP peer node if network is enabled
         if self.config.network_enabled && !self.config.network.shared_secret.is_empty() {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 kernel.start_ofp_node().await;
             });
         }
@@ -3164,7 +3198,9 @@ impl OpenFangKernel {
         // Probe local providers for reachability and model discovery
         {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 let local_providers: Vec<(String, String)> = {
                     let catalog = kernel
                         .model_catalog
@@ -3211,7 +3247,9 @@ impl OpenFangKernel {
         // Periodic usage data cleanup (every 24 hours, retain 90 days)
         {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
                 interval.tick().await; // Skip first immediate tick
                 loop {
@@ -3237,7 +3275,9 @@ impl OpenFangKernel {
             let interval_hours = self.config.memory.consolidation_interval_hours;
             if interval_hours > 0 {
                 let kernel = Arc::clone(self);
+                let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                 tokio::spawn(async move {
+                    let _guard = hub.push_scope();
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         interval_hours * 3600,
                     ));
@@ -3276,7 +3316,9 @@ impl OpenFangKernel {
             .unwrap_or(false);
         if has_mcp {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 kernel.connect_mcp_servers().await;
             });
         }
@@ -3284,7 +3326,9 @@ impl OpenFangKernel {
         // Start extension health monitor background task
         {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 kernel.run_extension_health_loop().await;
             });
         }
@@ -3292,7 +3336,9 @@ impl OpenFangKernel {
         // Cron scheduler tick loop — fires due jobs every 15 seconds
         {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
                 let mut persist_counter = 0u32;
                 interval.tick().await; // Skip first immediate tick
@@ -3390,7 +3436,9 @@ impl OpenFangKernel {
             if a2a_config.enabled && !a2a_config.external_agents.is_empty() {
                 let kernel = Arc::clone(self);
                 let agents = a2a_config.external_agents.clone();
+                let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                 tokio::spawn(async move {
+                    let _guard = hub.push_scope();
                     let discovered = openfang_runtime::a2a::discover_external_agents(&agents).await;
                     if let Ok(mut store) = kernel.a2a_external_agents.lock() {
                         *store = discovered;
@@ -3402,7 +3450,9 @@ impl OpenFangKernel {
         // Start WhatsApp Web gateway if WhatsApp channel is configured
         if self.config.channels.whatsapp.is_some() {
             let kernel = Arc::clone(self);
+            let hub = sentry::Hub::new_from_top(sentry::Hub::current());
             tokio::spawn(async move {
+                let _guard = hub.push_scope();
                 crate::whatsapp_gateway::start_whatsapp_gateway(&kernel).await;
             });
         }
@@ -3518,8 +3568,9 @@ impl OpenFangKernel {
         let kernel = Arc::clone(self);
         let config = HeartbeatConfig::default();
         let interval_secs = config.check_interval_secs;
-
+        let hub = sentry::Hub::new_from_top(sentry::Hub::current());
         tokio::spawn(async move {
+            let _guard = hub.push_scope();
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_secs(config.check_interval_secs));
 
@@ -3588,7 +3639,9 @@ impl OpenFangKernel {
         self.background
             .start_agent(agent_id, name, schedule, move |aid, msg| {
                 let k = Arc::clone(&kernel);
+                let hub = sentry::Hub::new_from_top(sentry::Hub::current());
                 tokio::spawn(async move {
+                    let _guard = hub.push_scope();
                     match k.send_message(aid, &msg).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -3648,7 +3701,9 @@ impl OpenFangKernel {
 
         // Give the active Sentry client a brief window to flush queued events before exit.
         if let Some(client) = sentry::Hub::current().client() {
-            client.flush(Some(std::time::Duration::from_secs(2)));
+            client.flush(Some(std::time::Duration::from_millis(
+                self.config.sentry.realtime_log_flush_timeout_ms,
+            )));
         }
     }
 

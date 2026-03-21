@@ -17,6 +17,18 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
+/// Axum middleware that binds a fresh Sentry hub to each request.
+///
+/// This replaces `sentry_tower::NewSentryLayer` which requires `Sync` bodies
+/// and is incompatible with Axum's `UnsyncBoxBody`.
+async fn sentry_hub_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let hub = std::sync::Arc::new(sentry::Hub::new_from_top(sentry::Hub::current()));
+    sentry::Hub::run(hub, || async { next.run(request).await }).await
+}
+
 /// Daemon info written to `~/.openfang/daemon.json` so the CLI can find us.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DaemonInfo {
@@ -624,6 +636,8 @@ pub async fn build_router(
         .layer(axum::middleware::from_fn(middleware::request_logging))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(sentry_tower::SentryHttpLayer::with_transaction())
+        .layer(axum::middleware::from_fn(sentry_hub_middleware))
         .layer(cors)
         .with_state(state.clone());
 
@@ -648,7 +662,9 @@ pub async fn run_daemon(
     {
         let k = kernel.clone();
         let config_path = kernel.config.home_dir.join("config.toml");
+        let hub = sentry::Hub::new_from_top(sentry::Hub::current());
         tokio::spawn(async move {
+            let _guard = hub.push_scope();
             let mut last_modified = std::fs::metadata(&config_path)
                 .and_then(|m| m.modified())
                 .ok();

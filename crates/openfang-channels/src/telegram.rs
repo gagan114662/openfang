@@ -141,7 +141,9 @@ impl ChannelAdapter for TelegramAdapter {
         let poll_interval = self.poll_interval;
         let mut shutdown = self.shutdown_rx.clone();
 
+        let hub = sentry::Hub::new_from_top(sentry::Hub::current());
         tokio::spawn(async move {
+            let _sentry_guard = hub.push_scope();
             let mut offset: Option<i64> = None;
             let mut backoff = INITIAL_BACKOFF;
             let mut retry_attempt: u32 = 0;
