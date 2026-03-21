@@ -2528,6 +2528,16 @@ pub async fn delete_agent_kv_key(
     }
 }
 
+/// GET /healthz — Kubernetes-style health check for container orchestration.
+/// Returns version, uptime_seconds, and agent_count. Available even with no agents.
+pub async fn healthz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": state.started_at.elapsed().as_secs(),
+        "agent_count": state.kernel.registry.count(),
+    }))
+}
+
 /// GET /api/health — Minimal liveness probe (public, no auth required).
 /// Returns only status and version to prevent information leakage.
 /// Use GET /api/health/detail for full diagnostics (requires auth).

@@ -83,6 +83,7 @@ pub async fn auth(
     // Public endpoints that don't require auth (dashboard needs these)
     let path = request.uri().path();
     if path == "/"
+        || path == "/healthz"
         || path == "/api/health"
         || path == "/api/health/detail"
         || path == "/api/status"
