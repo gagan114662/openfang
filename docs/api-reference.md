@@ -52,8 +52,16 @@ If `api_key` is empty or not set, the API is accessible without authentication. 
 
 ### Public Endpoints (No Auth Required)
 
-- `GET /api/health`
 - `GET /` (WebChat UI)
+- `GET /api/health`
+- `GET /api/health/detail`
+- `GET /api/status`
+- `GET /api/version`
+- `GET /api/agents`
+- `GET /api/profiles`
+- `GET /api/config`
+- `POST /api/telemetry/structured`
+- `GET /api/uploads/*`
 
 ---
 
