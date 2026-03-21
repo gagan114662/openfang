@@ -524,6 +524,7 @@ impl OpenFangKernel {
                 send_default_pii: config.sentry.include_prompts,
                 attach_stacktrace: true,
                 in_app_include: vec!["openfang_"],
+                enable_logs: true,
                 ..Default::default()
             },
         ));

@@ -636,7 +636,7 @@ pub async fn build_router(
         .layer(axum::middleware::from_fn(middleware::request_logging))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .layer(sentry_tower::SentryHttpLayer::with_transaction())
+        .layer(sentry_tower::SentryHttpLayer::new().enable_transaction())
         .layer(axum::middleware::from_fn(sentry_hub_middleware))
         .layer(cors)
         .with_state(state.clone());

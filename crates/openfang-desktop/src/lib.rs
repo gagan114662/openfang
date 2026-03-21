@@ -37,8 +37,13 @@ pub fn run() {
     let sentry_layer = sentry_tracing::layer()
         .enable_span_attributes()
         .event_filter(|metadata| match metadata.level() {
-            &tracing::Level::ERROR => sentry_tracing::EventFilter::Exception,
-            _ => sentry_tracing::EventFilter::Event,
+            &tracing::Level::ERROR => {
+                sentry_tracing::EventFilter::Event.union(sentry_tracing::EventFilter::Log)
+            }
+            &tracing::Level::WARN | &tracing::Level::INFO => {
+                sentry_tracing::EventFilter::Breadcrumb.union(sentry_tracing::EventFilter::Log)
+            }
+            _ => sentry_tracing::EventFilter::Ignore,
         });
 
     tracing_subscriber::registry()
