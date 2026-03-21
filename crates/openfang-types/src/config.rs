@@ -1231,14 +1231,13 @@ impl Default for SentryConfig {
             error_tracking: true,
             tags: std::collections::HashMap::new(),
             auth_token: None,
-            auth_token_env: None,
             sample_rate: default_sentry_sample_rate(),
             profiles_sample_rate: 0.0,
             realtime_log_flush: false,
-            realtime_log_flush_timeout_ms: default_flush_timeout_ms(),
+            realtime_log_flush_timeout_ms: default_sentry_flush_timeout_ms(),
             org_slug: None,
             project_slug: None,
-            api_base_url: default_sentry_api_base_url(),
+            api_base_url: None,
             api_timeout_secs: default_sentry_api_timeout_secs(),
         }
     }

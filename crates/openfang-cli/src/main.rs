@@ -731,7 +731,7 @@ fn init_tracing_stderr() {
 }
 
 /// Redirect tracing to a log file so it doesn't corrupt the ratatui TUI.
-fn init_tracing_file(logging: &openfang_types::config::LoggingConfig) {
+fn init_tracing_file() {
     let log_dir = dirs::home_dir()
         .map(|h| h.join(".openfang"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
@@ -792,10 +792,6 @@ fn main() {
 
     let cli = Cli::parse();
 
-    // Early config read for logging configuration (needed before tracing init)
-    let early_config = openfang_kernel::config::load_config(cli.config.as_deref());
-    let logging_config = early_config.logging.clone();
-
     // Determine if this invocation launches a ratatui TUI.
     // TUI modes must NOT install the Ctrl+C handler (it calls process::exit
     // which bypasses ratatui::restore and leaves the terminal in raw mode).
@@ -810,12 +806,12 @@ fn main() {
         );
 
     if is_tui_mode {
-        init_tracing_file(&logging_config);
+        init_tracing_file();
     } else {
         // CLI subcommands: install Ctrl+C handler for clean interrupt of
         // blocking read_line calls, and trace to stderr.
         install_ctrlc_handler();
-        init_tracing_stderr(&logging_config);
+        init_tracing_stderr();
     }
 
     match cli.command {

@@ -152,17 +152,11 @@ fn build_eval_metrics(
 
 struct TransactionFinisher {
     transaction: sentry::TransactionOrSpan,
-    flush_on_drop: bool,
-    flush_timeout_ms: u64,
 }
 
 impl TransactionFinisher {
     fn new(transaction: sentry::TransactionOrSpan) -> Self {
-        Self {
-            transaction,
-            flush_on_drop: true,
-            flush_timeout_ms: 500,
-        }
+        Self { transaction }
     }
 }
 
@@ -444,9 +438,6 @@ pub async fn run_agent_loop(
 
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
-
-        let parent_span: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
-            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
 
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
@@ -1904,9 +1895,6 @@ pub async fn run_agent_loop_streaming(
 
         // Context guard: compact oversized tool results before LLM call
         apply_context_guard(&mut messages, &context_budget, available_tools);
-
-        let parent_span_s: Option<std::sync::Arc<sentry::TransactionOrSpan>> =
-            sentry::configure_scope(|scope| scope.get_span().map(std::sync::Arc::new));
 
         let request = CompletionRequest {
             model: manifest.model.model.clone(),
