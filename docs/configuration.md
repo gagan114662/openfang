@@ -20,6 +20,7 @@ Complete reference for `config.toml`, covering every configurable field in the O
   - [\[a2a\]](#a2a)
   - [\[\[fallback\_providers\]\]](#fallback_providers)
   - [\[\[users\]\]](#users)
+  - [\[sentry\]](#sentry)
   - [Channel Overrides](#channel-overrides)
 - [Environment Variables](#environment-variables)
 - [Validation](#validation)
@@ -1516,3 +1517,55 @@ Configured in agent manifests via `AutonomousConfig`:
 | `max_restarts` | `10` | Maximum automatic restarts before permanent stop. |
 | `heartbeat_interval_secs` | `30` | Seconds between heartbeat health checks. |
 | `heartbeat_channel` | `null` | Channel to send heartbeat status to (e.g., `"telegram"`). |
+
+---
+
+## `[sentry]`
+
+Optional Sentry integration for error tracking, performance monitoring, and structured log capture.
+
+```toml
+[sentry]
+dsn = "https://examplePublicKey@o0.ingest.sentry.io/0"
+environment = "production"
+traces_sample_rate = 1.0
+sample_rate = 1.0
+include_prompts = false
+performance_monitoring = true
+error_tracking = true
+
+# Structured log capture (SDK 0.47+)
+realtime_log_flush = false
+realtime_log_flush_timeout_ms = 2000
+
+# Profiling (0.0 = disabled)
+profiles_sample_rate = 0.0
+
+# API access for sentry_live_summary.py
+auth_token = "sntrys_..."
+org_slug = "my-org"
+project_slug = "openfang"
+api_timeout_secs = 30
+
+[sentry.tags]
+deployment = "self-hosted"
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dsn` | `string?` | `null` | Sentry DSN. If absent, Sentry is disabled. |
+| `environment` | `string` | `"development"` | Environment tag (`production`, `staging`, `development`). |
+| `traces_sample_rate` | `float` | `1.0` | Fraction of transactions to send (0.0–1.0). |
+| `sample_rate` | `float` | `1.0` | Fraction of error events to send (0.0–1.0). |
+| `include_prompts` | `bool` | `false` | Include LLM prompts/completions in events (PII risk). |
+| `performance_monitoring` | `bool` | `true` | Enable transaction/span tracking. |
+| `error_tracking` | `bool` | `true` | Enable error event capture. |
+| `profiles_sample_rate` | `float` | `0.0` | Fraction of transactions to profile (0.0–1.0). |
+| `realtime_log_flush` | `bool` | `false` | Flush Sentry events immediately instead of batching. |
+| `realtime_log_flush_timeout_ms` | `int` | `2000` | Timeout in ms for the Sentry flush on shutdown. |
+| `auth_token` | `string?` | `null` | Sentry auth token for API access (used by `sentry_live_summary.py`). |
+| `org_slug` | `string?` | `null` | Sentry organization slug. |
+| `project_slug` | `string?` | `null` | Sentry project slug. |
+| `api_base_url` | `string?` | `null` | Custom Sentry API base URL (for self-hosted). |
+| `api_timeout_secs` | `int` | `30` | Timeout in seconds for Sentry API requests. |
+| `tags` | `map` | `{}` | Custom tags added to all Sentry events. |
