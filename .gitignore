@@ -47,3 +47,7 @@ Thumbs.db
 
 # Worktrees
 .worktrees/
+
+# Gas Town runtime
+.beads/
+.runtime/

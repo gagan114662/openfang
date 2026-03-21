@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 pub fn operation_cost(method: &str, path: &str) -> NonZeroU32 {
     match (method, path) {
+        (_, "/healthz") => NonZeroU32::new(1).unwrap(),
         (_, "/api/health") => NonZeroU32::new(1).unwrap(),
         ("GET", "/api/status") => NonZeroU32::new(1).unwrap(),
         ("GET", "/api/version") => NonZeroU32::new(1).unwrap(),
