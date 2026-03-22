@@ -148,7 +148,7 @@ jobs:
             --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock")
 
   ci-install-smoke:
-runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Fetch and syntax-check shell installer
         run: |
