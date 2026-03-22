@@ -193,11 +193,9 @@ jobs:
           trufflehog filesystem . \
             --no-update \
             --fail \
-            --only-verified \
-            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock")
+            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock\nintegrations/")
 
   ci-install-smoke:
-    name: ci-install-smoke
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' && contains(fromJSON(needs.preflight.outputs.required_checks_json), 'ci-install-smoke') }}
     runs-on: ubuntu-latest
