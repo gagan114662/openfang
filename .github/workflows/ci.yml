@@ -145,7 +145,7 @@ jobs:
           trufflehog filesystem . \
             --no-update \
             --fail \
-            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock\n**/integrations/")
+            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock\nintegrations/")
 
   ci-install-smoke:
     runs-on: ubuntu-latest
